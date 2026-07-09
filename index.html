@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#6d4fc4">
+<title>Mis Finanzas 💜</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="styles.css?v=6">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <span class="logo">💜</span>
+    <div>
+      <h1>Mis Finanzas</h1>
+      <p id="mes-label"></p>
+    </div>
+  </div>
+  <button id="btn-config" class="icon-btn" title="Configuración">⚙️</button>
+</header>
+
+<div id="banner" class="banner hidden"></div>
+
+<main>
+  <!-- ============ REGISTRAR ============ -->
+  <section id="view-registrar" class="view">
+    <div class="card entry-card">
+      <div class="tipo-toggle" id="tipo-toggle">
+        <button data-tipo="Gasto" class="active">💸 Gasto</button>
+        <button data-tipo="Ingreso">💰 Ingreso</button>
+        <button data-tipo="Por cobrar">🤝 Me deben</button>
+      </div>
+      <input id="entry-input" type="text" inputmode="text" autocomplete="off"
+             placeholder="Ej: 15.000 transporte" />
+      <div class="entry-row">
+        <input id="entry-fecha" type="date" />
+        <div id="monto-preview" class="monto-preview"></div>
+      </div>
+      <div class="cat-label">Categoría <span id="cat-auto" class="tag hidden">auto ✨</span></div>
+      <div id="cat-chips" class="chips"></div>
+      <button id="btn-guardar" class="primary big">Guardar ✓</button>
+    </div>
+    <div id="queue-info" class="queue-info hidden"></div>
+    <div class="card mini-resumen" id="mini-resumen"></div>
+  </section>
+
+  <!-- ============ RESUMEN ============ -->
+  <section id="view-resumen" class="view hidden">
+    <div class="month-nav">
+      <button id="mes-prev" class="icon-btn">◀</button>
+      <h2 id="resumen-mes"></h2>
+      <button id="mes-next" class="icon-btn">▶</button>
+    </div>
+    <div id="resumen-totales" class="totales"></div>
+    <div id="resumen-grupos"></div>
+  </section>
+
+  <!-- ============ MOVIMIENTOS ============ -->
+  <section id="view-movs" class="view hidden">
+    <input id="movs-buscar" type="search" placeholder="🔍 Buscar movimiento..." class="search">
+    <div id="movs-lista"></div>
+  </section>
+
+  <!-- ============ CHAT ============ -->
+  <section id="view-chat" class="view hidden">
+    <div class="chat-top">
+      <button id="chat-nuevo" class="chip-btn">🆕 Nueva conversación</button>
+      <button id="chat-lista-btn" class="chip-btn">🗂️ Mis chats</button>
+    </div>
+    <div id="chat-lista" class="chat-lista hidden"></div>
+    <div id="chat-mensajes" class="chat-box"></div>
+    <div class="chat-input-row">
+      <button id="chat-mic" class="mic" title="Hablar">🎤</button>
+      <input id="chat-input" type="text" placeholder="Pregúntame algo..." autocomplete="off">
+      <button id="chat-send" class="primary">➤</button>
+    </div>
+  </section>
+
+  <!-- ============ CONFIG ============ -->
+  <section id="view-config" class="view hidden">
+    <div class="card">
+      <h3>🔌 Conexión</h3>
+      <label>URL de tu Apps Script (termina en /exec)</label>
+      <input id="cfg-url" type="url" placeholder="https://script.google.com/macros/s/.../exec">
+      <button id="cfg-probar" class="primary">Conectar y probar</button>
+      <p id="cfg-estado" class="estado"></p>
+      <a id="cfg-sheet-link" href="#" target="_blank" class="hidden link">📊 Abrir mi hoja de Google Sheets</a>
+    </div>
+    <div class="card">
+      <h3>✨ Chat con IA (Gemini, gratis)</h3>
+      <label>API key de Gemini (se guarda segura en tu Google, no en el celular)</label>
+      <input id="cfg-gemini" type="password" placeholder="AIza...">
+      <button id="cfg-gemini-btn" class="primary">Guardar key</button>
+      <p class="hint">Créala gratis en <b>aistudio.google.com/apikey</b> con tu cuenta de Gmail.</p>
+    </div>
+    <div class="card">
+      <h3>🎨 Apariencia</h3>
+      <label>Tema</label>
+      <div class="tipo-toggle" id="tema-toggle">
+        <button data-tema="auto">🌗 Auto</button>
+        <button data-tema="claro">☀️ Claro</button>
+        <button data-tema="oscuro">🌙 Oscuro</button>
+      </div>
+      <label>Color principal</label>
+      <div id="color-swatches" class="swatches"></div>
+    </div>
+    <div class="card">
+      <h3>🏷️ Mis categorías</h3>
+      <p class="hint">Toca el emoji para cambiar el ícono, ✏️ para cambiar el nombre o 💲 para el presupuesto mensual. Nombres y montos se aplican también a tu hoja y a todo tu historial.</p>
+      <div id="cats-lista"></div>
+      <div class="cat-form">
+        <input id="cat-nueva-nombre" type="text" placeholder="Nueva categoría">
+        <select id="cat-nueva-grupo">
+          <option value="GASTOS">Gasto fijo</option>
+          <option value="OBLIGACIONES">Obligación</option>
+          <option value="GUSTOS" selected>Gusto</option>
+          <option value="PROVISIONES">Provisión</option>
+          <option value="INGRESOS">Ingreso</option>
+        </select>
+        <input id="cat-nueva-monto" type="text" inputmode="numeric" placeholder="Presupuesto mensual (opcional)">
+        <button id="cat-nueva-btn" class="primary">+ Crear categoría</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>📅 Recordatorios de pago</h3>
+      <div id="rec-lista"></div>
+      <div class="rec-form">
+        <input id="rec-nombre" type="text" placeholder="Ej: Internet">
+        <input id="rec-dia" type="number" min="1" max="31" placeholder="Día">
+        <input id="rec-monto" type="text" inputmode="numeric" placeholder="Monto aprox">
+        <button id="rec-add" class="primary">+ Agregar</button>
+      </div>
+      <p class="hint">Te llegará un correo 2 días antes y el mismo día del pago.</p>
+    </div>
+    <div class="card">
+      <h3>📥 Historial</h3>
+      <button id="btn-importar" class="secondary">Importar mis movimientos 2026 de WhatsApp</button>
+      <p id="importar-estado" class="estado"></p>
+    </div>
+  </section>
+</main>
+
+<!-- NAV INFERIOR -->
+<nav class="bottomnav">
+  <button data-view="registrar" class="active"><span>✏️</span>Registrar</button>
+  <button data-view="resumen"><span>📊</span>Resumen</button>
+  <button data-view="movs"><span>📋</span>Movs</button>
+  <button data-view="chat"><span>💬</span>Asesora</button>
+</nav>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="historico.js?v=6"></script>
+<script src="app.js?v=6"></script>
+</body>
+</html>
