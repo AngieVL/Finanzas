@@ -17,9 +17,13 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return; // la API (POST) siempre va a la red
   e.respondWith(
     fetch(e.request).then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status); // un 404 en pleno deploy no debe romper la app
       const copy = r.clone();
       caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {});
       return r;
-    }).catch(() => caches.match(e.request))
+    }).catch(() =>
+      // usa la copia guardada; ignoreSearch permite servir la versión anterior del archivo (?v=6 sirve para ?v=7)
+      caches.match(e.request).then(hit => hit || caches.match(e.request, { ignoreSearch: true }))
+    )
   );
 });
