@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="styles.css?v=7">
+<link rel="stylesheet" href="styles.css?v=8">
 </head>
 <body>
 
@@ -34,8 +34,11 @@
         <button data-tipo="Ingreso">💰 Ingreso</button>
         <button data-tipo="Por cobrar">🤝 Me deben</button>
       </div>
-      <input id="entry-input" type="text" inputmode="text" autocomplete="off"
-             placeholder="Ej: 15.000 transporte" />
+      <div class="entry-input-row">
+        <input id="entry-input" type="text" inputmode="text" autocomplete="off"
+               placeholder="Ej: 15.000 transporte" />
+        <button id="entry-mic" class="mic" title="Dictar">🎤</button>
+      </div>
       <div class="entry-row">
         <input id="entry-fecha" type="date" />
         <div id="monto-preview" class="monto-preview"></div>
@@ -50,13 +53,23 @@
 
   <!-- ============ RESUMEN ============ -->
   <section id="view-resumen" class="view hidden">
-    <div class="month-nav">
-      <button id="mes-prev" class="icon-btn">◀</button>
-      <h2 id="resumen-mes"></h2>
-      <button id="mes-next" class="icon-btn">▶</button>
+    <div class="tipo-toggle" id="res-tabs">
+      <button data-rtab="mes" class="active">📅 Mes</button>
+      <button data-rtab="tend">📈 Tendencias</button>
+      <button data-rtab="patri">💎 Patrimonio</button>
     </div>
-    <div id="resumen-totales" class="totales"></div>
-    <div id="resumen-grupos"></div>
+    <div id="rtab-mes">
+      <div class="month-nav">
+        <button id="mes-prev" class="icon-btn">◀</button>
+        <h2 id="resumen-mes"></h2>
+        <button id="mes-next" class="icon-btn">▶</button>
+      </div>
+      <div id="resumen-totales" class="totales"></div>
+      <div id="resumen-grupos"></div>
+      <div id="resumen-deudas"></div>
+    </div>
+    <div id="rtab-tend" class="hidden"></div>
+    <div id="rtab-patri" class="hidden"></div>
   </section>
 
   <!-- ============ MOVIMIENTOS ============ -->
@@ -164,6 +177,6 @@
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

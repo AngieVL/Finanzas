@@ -1,4 +1,7 @@
 :root {
+  /* colores de series validados (daltonismo + contraste) — no siguen el tema para mantener legibilidad */
+  --chart-gasto: #6d4fc4;
+  --chart-ingreso: #2eb872;
   --violet: #6d4fc4;
   --violet-dark: #57399f;
   --violet-light: #efeafc;
@@ -16,6 +19,8 @@
 
 /* ---------- modo oscuro ---------- */
 body.dark {
+  --chart-gasto: #8f75e3;
+  --chart-ingreso: #29ad70;
   --bg: #16131f;
   --card: #211c30;
   --text: #eae6f5;
@@ -276,6 +281,56 @@ select {
 .rec-form button { grid-column: 1 / -1; margin-top: 2px; }
 .rec-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0edf9; font-size: 14px; }
 .rec-item small { color: var(--muted); }
+
+/* ---------- registrar: input + mic ---------- */
+.entry-input-row { display: flex; gap: 8px; margin-bottom: 10px; }
+.entry-input-row input { flex: 1; margin-bottom: 0 !important; }
+.entry-input-row .mic { width: 54px; }
+
+/* ---------- deudas ---------- */
+.deuda-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #f0edf9; }
+body.dark .deuda-row { border-bottom-color: #322a49; }
+.deuda-row:last-child { border-bottom: none; }
+.deuda-row .quien { flex: 1; font-weight: 600; font-size: 14px; }
+.deuda-row .detalle { font-size: 11.5px; color: var(--muted); }
+.deuda-row .saldo { font-weight: 800; font-size: 14.5px; color: var(--amber); }
+.deuda-row .saldo.cero { color: var(--green); }
+
+/* ---------- gráficas ---------- */
+.chart-card svg { width: 100%; height: auto; display: block; }
+.legend { display: flex; gap: 16px; margin: 4px 0 10px; font-size: 12.5px; color: var(--muted); }
+.legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+.chart-caption { font-size: 12.5px; color: var(--muted); margin-top: 8px; text-align: center; min-height: 17px; }
+.mini-table { width: 100%; font-size: 12px; border-collapse: collapse; margin-top: 10px; }
+.mini-table th { text-align: right; color: var(--muted); font-weight: 600; padding: 4px 6px; border-bottom: 1px solid #f0edf9; }
+.mini-table th:first-child, .mini-table td:first-child { text-align: left; }
+.mini-table td { text-align: right; padding: 4px 6px; color: var(--text); }
+body.dark .mini-table th { border-bottom-color: #322a49; }
+.top-cat { margin: 9px 0; }
+.top-cat .info { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 3px; }
+.top-cat .info b { font-weight: 600; }
+.top-cat .info span { color: var(--muted); font-size: 12px; }
+
+/* ---------- metas ---------- */
+.meta-row { margin: 12px 0; }
+.meta-row .info { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+.meta-row .pct { font-weight: 800; color: var(--violet-dark); }
+body.dark .meta-row .pct { color: #cbbdf5; }
+
+/* ---------- patrimonio ---------- */
+.patri-total { text-align: center; padding: 6px 0 2px; }
+.patri-total small { color: var(--muted); font-size: 12px; display: block; }
+.patri-total .gran { font-size: 27px; font-weight: 800; color: var(--text); }
+.delta { font-weight: 700; font-size: 13.5px; }
+.delta.pos { color: var(--green); }
+.delta.neg { color: var(--red); }
+.patri-row { display: grid; grid-template-columns: 1fr 130px 34px; gap: 8px; margin-bottom: 8px; align-items: center; }
+.patri-row input { padding: 10px 12px; font-size: 14px; }
+.patri-row .del { border: none; background: var(--violet-light); border-radius: 9px; height: 34px; cursor: pointer; color: var(--violet-dark); }
+body.dark .patri-row .del { background: #322a49; color: #cbbdf5; }
+.patri-hist { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #f0edf9; font-size: 13.5px; }
+body.dark .patri-hist { border-bottom-color: #322a49; }
+.patri-hist:last-child { border-bottom: none; }
 
 /* ---------- nav ---------- */
 .bottomnav {

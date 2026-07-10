@@ -215,6 +215,9 @@ async function refreshState(mes) {
 
 // ---------------- registro ----------------
 function parseEntry(text) {
+  // "15 mil" o "15,5 mil" (típico del dictado por voz) → 15000 / 15500
+  text = text.replace(/(\d+(?:[.,]\d+)?)\s*mil\b/gi,
+    (_, n) => String(Math.round(parseFloat(n.replace(',', '.')) * 1000)));
   const m = text.match(/([\d]{1,3}(?:[.,'’]\d{3})+|\d+)\s*(k)?\s*(.*)/i);
   if (!m) return null;
   let monto = parseInt(m[1].replace(/[.,'’]/g, ''), 10);
@@ -222,14 +225,56 @@ function parseEntry(text) {
   return { monto, desc: (m[3] || '').trim() };
 }
 
+let personaSel = null;
+let accionDeuda = 'deuda'; // 'deuda' = me deben | 'abono' = me pagaron
+
 function renderChips() {
-  const list = tipoSel === 'Por cobrar' ? [] : getCats(tipoSel);
   const box = $('cat-chips');
   box.innerHTML = '';
   if (tipoSel === 'Por cobrar') {
-    box.innerHTML = '<p class="hint">Se guarda como cuenta por cobrar 🤝 (no afecta tu presupuesto)</p>';
+    // acción: nueva deuda o abono
+    const acciones = document.createElement('div');
+    acciones.className = 'tipo-toggle';
+    acciones.style.marginBottom = '10px';
+    acciones.style.width = '100%';
+    [['deuda', '🤝 Me deben (presté)'], ['abono', '💰 Me pagaron']].forEach(([val, lbl]) => {
+      const b = document.createElement('button');
+      b.textContent = lbl;
+      b.className = accionDeuda === val ? 'active' : '';
+      b.onclick = () => { accionDeuda = val; renderChips(); };
+      acciones.appendChild(b);
+    });
+    box.appendChild(acciones);
+    // persona
+    const label = document.createElement('div');
+    label.className = 'cat-label';
+    label.textContent = '¿Quién?';
+    label.style.width = '100%';
+    box.appendChild(label);
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    chips.style.width = '100%';
+    const personas = new Set(['Patri', 'Iduar', 'Ángela']);
+    Object.keys((state && state.deudas) || {}).forEach(p => personas.add(p));
+    personas.forEach(p => {
+      const b = document.createElement('button');
+      const saldo = state && state.deudas && state.deudas[p] ? state.deudas[p].saldo : 0;
+      b.textContent = `👤 ${p}${saldo > 0 ? ' · ' + fmt(saldo) : ''}`;
+      b.className = p === personaSel ? 'sel' : '';
+      b.onclick = () => { personaSel = p; renderChips(); };
+      chips.appendChild(b);
+    });
+    const otra = document.createElement('button');
+    otra.textContent = '➕ Otra persona';
+    otra.onclick = () => {
+      const p = prompt('¿Cómo se llama?');
+      if (p && p.trim()) { personaSel = p.trim(); renderChips(); }
+    };
+    chips.appendChild(otra);
+    box.appendChild(chips);
     return;
   }
+  const list = getCats(tipoSel);
   list.forEach(({ c, e }) => {
     const b = document.createElement('button');
     b.textContent = `${e} ${c.replace('Provisión ', 'P. ')}`;
@@ -252,11 +297,18 @@ function onEntryInput() {
 async function guardar() {
   const p = parseEntry($('entry-input').value);
   if (!p || !p.monto) return toast('Escribe el monto, ej: 15.000 transporte');
-  const tipo = tipoSel;
-  const categoria = tipo === 'Por cobrar' ? 'Por cobrar' : (catSel || clasificar(p.desc, tipo));
+  let tipo = tipoSel, categoria;
+  if (tipoSel === 'Por cobrar') {
+    if (!personaSel) return toast('Elige quién 👤');
+    tipo = accionDeuda === 'abono' ? 'Abono' : 'Por cobrar';
+    categoria = personaSel;
+  } else {
+    categoria = catSel || clasificar(p.desc, tipo);
+  }
   const mov = {
     action: 'add', fecha: $('entry-fecha').value || hoyFecha(), tipo,
-    categoria, grupo: grupoDe(categoria, tipo), monto: p.monto, descripcion: p.desc,
+    categoria, grupo: tipoSel === 'Por cobrar' ? 'POR COBRAR' : grupoDe(categoria, tipo),
+    monto: p.monto, descripcion: p.desc,
   };
   $('entry-input').value = ''; $('monto-preview').textContent = '';
   catSel = null; catManual = false; $('cat-auto').classList.add('hidden'); renderChips();
@@ -362,14 +414,54 @@ async function renderResumen() {
     });
     html += `<div class="grupo-card"><h4><span>${g}</span><span>${fmt(gTot)} / ${fmt(gPres)}</span></h4>${rows}</div>`;
   });
-  if (porCobrar) html += `<div class="grupo-card"><h4><span>🤝 ME DEBEN</span><span>${fmt(porCobrar)}</span></h4></div>`;
   $('resumen-grupos').innerHTML = html;
+  renderDeudas(st);
 
   // banner si hay categorías pasadas (solo mes actual)
   if (mesVista === hoyMes()) {
     const pasadas = (st.presupuesto || []).filter(p => p.mensual > 0 && (tot[p.categoria] || 0) >= p.mensual);
     if (pasadas.length) showBanner(`🚨 Presupuesto superado en: ${pasadas.map(p => p.categoria).join(', ')}`, true);
   }
+}
+
+function renderDeudas(st) {
+  const box = $('resumen-deudas');
+  const deudas = (st && st.deudas) || {};
+  const personas = Object.keys(deudas).filter(p => deudas[p].debe > 0 || deudas[p].abonado > 0);
+  if (!personas.length) { box.innerHTML = ''; return; }
+  personas.sort((a, b) => deudas[b].saldo - deudas[a].saldo);
+  const total = personas.reduce((s, p) => s + Math.max(deudas[p].saldo, 0), 0);
+  let rows = '';
+  personas.forEach(p => {
+    const d = deudas[p];
+    rows += `
+      <div class="deuda-row">
+        <div style="flex:1">
+          <div class="quien">👤 ${p}</div>
+          <div class="detalle">prestado ${fmt(d.debe)} · pagado ${fmt(d.abonado)}</div>
+        </div>
+        <span class="saldo ${d.saldo <= 0 ? 'cero' : ''}">${d.saldo <= 0 ? '✓ a paz' : fmt(d.saldo)}</span>
+      </div>`;
+  });
+  box.innerHTML = `
+    <div class="grupo-card">
+      <h4><span>🤝 ME DEBEN</span><span>${fmt(total)}</span></h4>
+      ${rows}
+      <p class="hint" style="margin-top:8px">Registra abonos desde ✏️ Registrar → "Me deben" → "💰 Me pagaron"</p>
+    </div>`;
+}
+
+// ---------------- pestañas del resumen ----------------
+let rtabActivo = 'mes';
+function renderResTab(tab) {
+  rtabActivo = tab;
+  document.querySelectorAll('#res-tabs button').forEach(b =>
+    b.classList.toggle('active', b.dataset.rtab === tab));
+  ['mes', 'tend', 'patri'].forEach(t =>
+    $('rtab-' + t).classList.toggle('hidden', t !== tab));
+  if (tab === 'mes') renderResumen();
+  if (tab === 'tend') renderTendencias();
+  if (tab === 'patri') { patriItems = null; renderPatrimonio(); }
 }
 
 function moverMes(delta) {
@@ -379,6 +471,226 @@ function moverMes(delta) {
   if (m > 12) { m = 1; y++; }
   mesVista = y + '-' + String(m).padStart(2, '0');
   renderResumen();
+}
+
+// ---------------- tendencias 📈 ----------------
+const NOMBRES_MES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+function mesCorto(m) { return NOMBRES_MES[parseInt(m.slice(5), 10) - 1] || m; }
+function fmtM(n) { return n >= 1e6 ? '$' + (n / 1e6).toFixed(1).replace('.0', '') + 'M' : n >= 1e3 ? '$' + Math.round(n / 1e3) + 'k' : '$' + n; }
+
+async function renderTendencias() {
+  const box = $('rtab-tend');
+  box.innerHTML = '<div class="card">Cargando... 📈</div>';
+  let t;
+  try { t = await api({ action: 'tendencias' }); }
+  catch (e) { box.innerHTML = `<div class="card">Sin conexión: ${e.message}</div>`; return; }
+
+  let html = '';
+
+  // --- metas de provisiones (acumulado del año) ---
+  const provisiones = ((state && state.presupuesto) || []).filter(p => p.grupo === 'PROVISIONES' && p.mensual > 0);
+  if (provisiones.length) {
+    let metas = '';
+    provisiones.forEach(p => {
+      const metaAnual = p.mensual * 12;
+      const acum = (t.ytd || {})[p.categoria] || 0;
+      const pct = Math.min(Math.round(acum / metaAnual * 100), 100);
+      metas += `
+        <div class="meta-row">
+          <div class="info">
+            <span>${emoji(p.categoria)} ${p.categoria.replace('Provisión ', '')}</span>
+            <span><span class="pct">${pct}%</span> · ${fmt(acum)} de ${fmtM(metaAnual)}</span>
+          </div>
+          <div class="barra"><div style="width:${pct}%; background:var(--chart-gasto)"></div></div>
+        </div>`;
+    });
+    html += `<div class="card"><h3>🎯 Metas ${t.anio} (lo que has aportado)</h3>${metas}</div>`;
+  }
+
+  // --- barras ingresos vs gastos (últimos 6 meses) ---
+  const meses = (t.meses || []).slice(-6);
+  if (meses.length) {
+    const max = Math.max(...meses.map(m => Math.max(m.ingresos, m.gastos)), 1);
+    const W = 340, H = 175, base = 140, plotTop = 14;
+    const groupW = (W - 20) / meses.length;
+    const barW = Math.min(20, groupW / 2 - 6);
+    let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Ingresos y gastos por mes">`;
+    // grid recesivo
+    [0.5, 1].forEach(f => {
+      const y = base - (base - plotTop) * f;
+      svg += `<line x1="10" y1="${y}" x2="${W - 10}" y2="${y}" stroke="currentColor" opacity=".12" stroke-width="1"/>`;
+      svg += `<text x="${W - 10}" y="${y - 3}" text-anchor="end" font-size="8.5" fill="currentColor" opacity=".55">${fmtM(max * f)}</text>`;
+    });
+    meses.forEach((m, i) => {
+      const cx = 10 + groupW * i + groupW / 2;
+      const hI = Math.max((base - plotTop) * m.ingresos / max, m.ingresos ? 2 : 0);
+      const hG = Math.max((base - plotTop) * m.gastos / max, m.gastos ? 2 : 0);
+      svg += `<g class="barmes" data-i="${i}" style="cursor:pointer">
+        <rect x="${cx - barW - 2}" y="${base - hI}" width="${barW}" height="${hI}" rx="3.5" fill="var(--chart-ingreso)"/>
+        <rect x="${cx + 2}" y="${base - hG}" width="${barW}" height="${hG}" rx="3.5" fill="var(--chart-gasto)"/>
+        <rect x="${cx - groupW / 2}" y="${plotTop}" width="${groupW}" height="${base - plotTop}" fill="transparent"/>
+        <text x="${cx}" y="${base + 14}" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">${mesCorto(m.mes)}</text>
+      </g>`;
+    });
+    svg += '</svg>';
+    let tabla = '<table class="mini-table"><tr><th>Mes</th><th>Ingresos</th><th>Gastos</th><th>Balance</th></tr>';
+    meses.forEach(m => {
+      tabla += `<tr><td>${mesCorto(m.mes)} ${m.mes.slice(0, 4)}</td><td>${fmt(m.ingresos)}</td><td>${fmt(m.gastos)}</td><td>${fmt(m.ingresos - m.gastos)}</td></tr>`;
+    });
+    tabla += '</table>';
+    html += `
+      <div class="card chart-card">
+        <h3>📊 Ingresos vs Gastos</h3>
+        <div class="legend">
+          <span><span class="dot" style="background:var(--chart-ingreso)"></span>Ingresos</span>
+          <span><span class="dot" style="background:var(--chart-gasto)"></span>Gastos</span>
+        </div>
+        ${svg}
+        <div class="chart-caption" id="tend-caption">Toca un mes para ver el detalle</div>
+        ${tabla}
+      </div>`;
+  } else {
+    html += '<div class="card">Aún no hay suficientes datos — registra tus movimientos y aquí verás tu evolución 📈</div>';
+  }
+
+  // --- top categorías (promedio mensual) ---
+  const top = (t.topCategorias || []).slice(0, 6);
+  if (top.length) {
+    const maxT = top[0].promedio || 1;
+    let rows = '';
+    top.forEach(c => {
+      rows += `
+        <div class="top-cat">
+          <div class="info"><b>${emoji(c.categoria)} ${c.categoria.replace('Provisión ', '')}</b><span>${fmt(c.promedio)}/mes</span></div>
+          <div class="barra"><div style="width:${Math.round(c.promedio / maxT * 100)}%; background:var(--chart-gasto)"></div></div>
+        </div>`;
+    });
+    html += `<div class="card"><h3>🔝 En qué se te va más (promedio mensual)</h3>${rows}</div>`;
+  }
+
+  box.innerHTML = html;
+  box.querySelectorAll('.barmes').forEach(g => g.onclick = () => {
+    const m = meses[Number(g.dataset.i)];
+    $('tend-caption').innerHTML = `<b>${mesCorto(m.mes)} ${m.mes.slice(0, 4)}</b>: ingresos ${fmt(m.ingresos)} · gastos ${fmt(m.gastos)} · balance ${fmt(m.ingresos - m.gastos)}`;
+  });
+}
+
+// ---------------- patrimonio 💎 ----------------
+let patriItems = null; // items del editor en memoria
+
+async function renderPatrimonio() {
+  const box = $('rtab-patri');
+  box.innerHTML = '<div class="card">Cargando... 💎</div>';
+  let p;
+  try { p = await api({ action: 'patrimonio_get' }); }
+  catch (e) { box.innerHTML = `<div class="card">Sin conexión: ${e.message}</div>`; return; }
+  const meses = p.meses || [];
+  const ultimo = meses[meses.length - 1];
+  const previo = meses[meses.length - 2];
+
+  let html = '';
+
+  // --- total y crecimiento ---
+  if (ultimo) {
+    const delta = previo ? ultimo.total - previo.total : 0;
+    const pct = previo && previo.total ? (delta / previo.total * 100).toFixed(1) : null;
+    html += `
+      <div class="card">
+        <div class="patri-total">
+          <small>Tu patrimonio (${mesCorto(ultimo.mes)} ${ultimo.mes.slice(0, 4)})</small>
+          <div class="gran">${fmt(ultimo.total)}</div>
+          ${previo ? `<span class="delta ${delta >= 0 ? 'pos' : 'neg'}">${delta >= 0 ? '▲' : '▼'} ${fmt(Math.abs(delta))}${pct !== null ? ' (' + (delta >= 0 ? '+' : '-') + Math.abs(pct) + '%)' : ''} vs mes anterior</span>` : ''}
+        </div>
+      </div>`;
+  }
+
+  // --- línea de evolución ---
+  if (meses.length >= 2) {
+    const W = 340, H = 150, x0 = 14, x1 = W - 14, yTop = 14, yBase = H - 26;
+    const vals = meses.map(m => m.total);
+    const vMin = Math.min(...vals), vMax = Math.max(...vals);
+    const rango = (vMax - vMin) || 1;
+    const px = i => x0 + (x1 - x0) * (meses.length === 1 ? 0.5 : i / (meses.length - 1));
+    const py = v => yBase - (yBase - yTop) * ((v - vMin) / rango);
+    const pts = meses.map((m, i) => `${px(i).toFixed(1)},${py(m.total).toFixed(1)}`);
+    let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Evolución del patrimonio">`;
+    svg += `<polygon points="${x0},${yBase} ${pts.join(' ')} ${x1},${yBase}" fill="var(--chart-gasto)" opacity=".12"/>`;
+    svg += `<polyline points="${pts.join(' ')}" fill="none" stroke="var(--chart-gasto)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    meses.forEach((m, i) => {
+      svg += `<circle class="ppt" data-i="${i}" cx="${px(i).toFixed(1)}" cy="${py(m.total).toFixed(1)}" r="4.5" fill="var(--chart-gasto)" stroke="var(--card)" stroke-width="2" style="cursor:pointer"/>`;
+      svg += `<text x="${px(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">${mesCorto(m.mes)}</text>`;
+    });
+    svg += '</svg>';
+    html += `<div class="card chart-card"><h3>📈 Evolución</h3>${svg}<div class="chart-caption" id="patri-caption">Toca un punto para ver el valor</div></div>`;
+  }
+
+  // --- editor del snapshot del mes actual ---
+  const mesActual = hoyMes();
+  const yaEste = meses.find(m => m.mes === mesActual);
+  if (!patriItems) {
+    const baseItems = (yaEste || ultimo || { items: [] }).items;
+    patriItems = baseItems.length
+      ? baseItems.map(x => ({ item: x.item, valor: x.valor }))
+      : [{ item: 'Cuenta de ahorros', valor: 0 }, { item: 'Fiducuenta', valor: 0 }, { item: 'Cesantías', valor: 0 }];
+  }
+  let editor = '';
+  patriItems.forEach((it, i) => {
+    editor += `
+      <div class="patri-row">
+        <input type="text" data-i="${i}" data-f="item" value="${String(it.item).replace(/"/g, '&quot;')}" placeholder="Activo">
+        <input type="text" inputmode="numeric" data-i="${i}" data-f="valor" value="${it.valor ? it.valor.toLocaleString('es-CO') : ''}" placeholder="Valor">
+        <button class="del" data-i="${i}">✕</button>
+      </div>`;
+  });
+  html += `
+    <div class="card">
+      <h3>📸 ${yaEste ? 'Actualizar' : 'Registrar'} patrimonio de ${mesCorto(mesActual)} ${mesActual.slice(0, 4)}</h3>
+      <p class="hint">Escribe cuánto tienes hoy en cada activo (prellenado con tu último registro).</p>
+      <div id="patri-editor">${editor}</div>
+      <button id="patri-add" class="secondary" style="margin-bottom:8px">+ Agregar activo</button>
+      <button id="patri-save" class="primary" style="width:100%">Guardar patrimonio ✓</button>
+    </div>`;
+
+  // --- historial ---
+  if (meses.length) {
+    let hist = '';
+    [...meses].reverse().forEach((m, i, arr) => {
+      const ant = arr[i + 1];
+      const d = ant ? m.total - ant.total : null;
+      hist += `<div class="patri-hist"><span>${mesCorto(m.mes)} ${m.mes.slice(0, 4)}</span><span><b>${fmt(m.total)}</b> ${d !== null ? `<span class="delta ${d >= 0 ? 'pos' : 'neg'}">${d >= 0 ? '+' : '−'}${fmtM(Math.abs(d))}</span>` : ''}</span></div>`;
+    });
+    html += `<div class="card"><h3>🗓️ Historial</h3>${hist}</div>`;
+  }
+
+  box.innerHTML = html;
+
+  // eventos
+  box.querySelectorAll('.ppt').forEach(c => c.onclick = () => {
+    const m = meses[Number(c.dataset.i)];
+    $('patri-caption').innerHTML = `<b>${mesCorto(m.mes)} ${m.mes.slice(0, 4)}</b>: ${fmt(m.total)}`;
+  });
+  box.querySelectorAll('#patri-editor input').forEach(inp => inp.onchange = () => {
+    const it = patriItems[Number(inp.dataset.i)];
+    if (inp.dataset.f === 'item') it.item = inp.value;
+    else it.valor = parseInt(inp.value.replace(/\D/g, ''), 10) || 0;
+  });
+  box.querySelectorAll('#patri-editor .del').forEach(b => b.onclick = () => {
+    patriItems.splice(Number(b.dataset.i), 1);
+    renderPatrimonio();
+  });
+  const addBtn = $('patri-add');
+  if (addBtn) addBtn.onclick = () => { patriItems.push({ item: '', valor: 0 }); renderPatrimonio(); };
+  const saveBtn = $('patri-save');
+  if (saveBtn) saveBtn.onclick = async () => {
+    const items = patriItems.filter(x => x.item && x.item.trim());
+    if (!items.length) return toast('Agrega al menos un activo');
+    try {
+      const r = await api({ action: 'patrimonio_save', mes: mesActual, items });
+      toast(`✓ Patrimonio guardado: ${fmt(r.total)}`);
+      patriItems = null;
+      renderPatrimonio();
+    } catch (e) { toast('Error: ' + e.message); }
+  };
 }
 
 // ---------------- movimientos ----------------
@@ -499,33 +811,39 @@ async function enviarChat() {
 }
 
 // ---------------- dictado por voz 🎤 ----------------
-let reconocedor = null, grabando = false;
-function initVoz() {
+function crearDictado(btnId, inputId, onFin) {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { $('chat-mic').style.display = 'none'; return; }
-  reconocedor = new SR();
-  reconocedor.lang = 'es-CO';
-  reconocedor.interimResults = true;
-  reconocedor.continuous = false;
-  reconocedor.onresult = (ev) => {
-    let final = '', parcial = '';
-    for (const res of ev.results) (res.isFinal ? final += res[0].transcript : parcial += res[0].transcript);
-    $('chat-input').value = (final + parcial).trim();
+  const btn = $(btnId);
+  if (!SR) { btn.style.display = 'none'; return; }
+  const rec = new SR();
+  rec.lang = 'es-CO';
+  rec.interimResults = true;
+  rec.continuous = false;
+  let grabando = false;
+  rec.onresult = (ev) => {
+    let texto = '';
+    for (const res of ev.results) texto += res[0].transcript;
+    $(inputId).value = texto.trim();
+    $(inputId).dispatchEvent(new Event('input'));
   };
-  reconocedor.onend = () => {
+  rec.onend = () => {
     grabando = false;
-    $('chat-mic').classList.remove('rec');
-    if ($('chat-input').value.trim()) enviarChat();
+    btn.classList.remove('rec');
+    if (onFin && $(inputId).value.trim()) onFin();
   };
-  reconocedor.onerror = () => { grabando = false; $('chat-mic').classList.remove('rec'); };
-  $('chat-mic').onclick = () => {
-    if (grabando) { reconocedor.stop(); return; }
+  rec.onerror = () => { grabando = false; btn.classList.remove('rec'); };
+  btn.onclick = () => {
+    if (grabando) { rec.stop(); return; }
     grabando = true;
-    $('chat-mic').classList.add('rec');
-    $('chat-input').value = '';
-    $('chat-input').placeholder = 'Te escucho... 🎙️';
-    try { reconocedor.start(); } catch (e) { grabando = false; $('chat-mic').classList.remove('rec'); }
+    btn.classList.add('rec');
+    $(inputId).value = '';
+    try { rec.start(); } catch (e) { grabando = false; btn.classList.remove('rec'); }
   };
+}
+
+function initVoz() {
+  crearDictado('chat-mic', 'chat-input', enviarChat);          // en el chat: al terminar, envía
+  crearDictado('entry-mic', 'entry-input', null);              // en registrar: solo dicta, tú confirmas
 }
 
 // ---------------- config ----------------
@@ -693,7 +1011,7 @@ function switchView(name) {
   document.querySelectorAll('.bottomnav button').forEach(b =>
     b.classList.toggle('active', b.dataset.view === name));
   if (name === 'registrar') renderChips(); // por si creaste/renombraste categorías
-  if (name === 'resumen') renderResumen();
+  if (name === 'resumen') renderResTab(rtabActivo);
   if (name === 'movs') renderMovs();
   if (name === 'config') {
     if (cfg.url) { $('cfg-url').value = cfg.url; renderRecs(); }
@@ -728,6 +1046,7 @@ function init() {
 
   document.querySelectorAll('.bottomnav button').forEach(b => b.onclick = () => switchView(b.dataset.view));
   $('btn-config').onclick = () => switchView('config');
+  document.querySelectorAll('#res-tabs button').forEach(b => b.onclick = () => renderResTab(b.dataset.rtab));
   $('mes-prev').onclick = () => moverMes(-1);
   $('mes-next').onclick = () => moverMes(1);
   $('movs-buscar').addEventListener('input', () => renderMovs());
