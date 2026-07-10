@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="styles.css?v=6">
+<link rel="stylesheet" href="styles.css?v=7">
 </head>
 <body>
 
@@ -134,12 +134,22 @@
         <input id="rec-monto" type="text" inputmode="numeric" placeholder="Monto aprox">
         <button id="rec-add" class="primary">+ Agregar</button>
       </div>
-      <p class="hint">Te llegará un correo 2 días antes y el mismo día del pago.</p>
+      <p class="hint">Te avisará 2 días antes y el mismo día del pago (por WhatsApp si lo configuras abajo; si no, por correo).</p>
     </div>
     <div class="card">
-      <h3>📥 Historial</h3>
-      <button id="btn-importar" class="secondary">Importar mis movimientos 2026 de WhatsApp</button>
-      <p id="importar-estado" class="estado"></p>
+      <h3>📱 Avisos por WhatsApp (gratis)</h3>
+      <p class="hint">
+        Para que tus alertas de presupuesto y recordatorios lleguen a tu WhatsApp en vez del correo:<br><br>
+        <b>1.</b> Guarda este contacto: <b>+34 644 53 78 49</b> (ponle "Bot Finanzas")<br>
+        <b>2.</b> Envíale este mensaje por WhatsApp:<br><i>I allow callmebot to send me messages</i><br>
+        <b>3.</b> En ~2 min te responde con tu <b>apikey</b> (un número) — pégalo aquí:
+      </p>
+      <label>Tu número de WhatsApp (con +57)</label>
+      <input id="wa-phone" type="tel" placeholder="+573001234567">
+      <label>Apikey que te respondió el bot</label>
+      <input id="wa-key" type="text" inputmode="numeric" placeholder="123456">
+      <button id="wa-save" class="primary">Guardar y enviarme una prueba</button>
+      <p id="wa-estado" class="estado"></p>
     </div>
   </section>
 </main>
@@ -154,7 +164,6 @@
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="historico.js?v=6"></script>
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 /* Service worker: deja la app disponible aunque no haya internet */
-const CACHE = 'finanzas-v6';
-const ASSETS = ['./', './index.html', './styles.css?v=6', './app.js?v=6', './historico.js?v=6',
+const CACHE = 'finanzas-v7';
+const ASSETS = ['./', './index.html', './styles.css?v=7', './app.js?v=7',
                 './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {

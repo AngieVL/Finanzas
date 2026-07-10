@@ -580,14 +580,16 @@ async function agregarRec() {
   } catch (e) { toast('Error: ' + e.message); }
 }
 
-async function importarHistorial() {
-  if (typeof HISTORICO === 'undefined' || !HISTORICO.length) return;
-  setEstado('importar-estado', `Importando ${HISTORICO.length} movimientos...`, true);
+async function guardarWhatsApp() {
+  const phone = $('wa-phone').value.trim();
+  const key = $('wa-key').value.trim();
+  if (!phone || !key) return setEstado('wa-estado', 'Escribe tu número y la apikey', false);
+  setEstado('wa-estado', 'Guardando y enviando prueba...', true);
   try {
-    const r = await api({ action: 'add_batch', items: HISTORICO });
-    setEstado('importar-estado', `✓ Listo: ${r.agregados} importados, ${r.omitidos} ya existían`, true);
-    refreshState();
-  } catch (e) { setEstado('importar-estado', '✗ ' + e.message, false); }
+    await api({ action: 'set_whatsapp', phone, key });
+    await api({ action: 'test_whatsapp' });
+    setEstado('wa-estado', '✓ ¡Revisa tu WhatsApp! Ahí llegó la prueba 💜', true);
+  } catch (e) { setEstado('wa-estado', '✗ ' + e.message, false); }
 }
 
 // --------- editor de categorías ---------
@@ -735,7 +737,7 @@ function init() {
   $('cfg-gemini-btn').onclick = guardarGemini;
   $('rec-add').onclick = agregarRec;
   $('cat-nueva-btn').onclick = crearCategoria;
-  $('btn-importar').onclick = importarHistorial;
+  $('wa-save').onclick = guardarWhatsApp;
 
   // chat: conversaciones y voz
   renderChatBox();
