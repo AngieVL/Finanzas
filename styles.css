@@ -380,6 +380,26 @@ body.dark .patri-row .del { background: #322a49; color: #cbbdf5; }
 body.dark .patri-hist { border-bottom-color: #322a49; }
 .patri-hist:last-child { border-bottom: none; }
 
+/* ---------- metas 🎯 ---------- */
+.meta-card.lograda { border: 2px solid var(--green); }
+.meta-head { display: flex; justify-content: space-between; align-items: center; }
+.meta-head h3 { margin-bottom: 4px; }
+.meta-head .del { border: none; background: none; color: #ccc5e0; font-size: 16px; cursor: pointer; }
+.info-meta { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 8px; font-size: 13px; color: var(--muted); }
+.pct-grande { font-size: 26px; font-weight: 800; color: var(--violet-dark); }
+body.dark .pct-grande { color: #cbbdf5; }
+.barra.alta { height: 12px; border-radius: 8px; }
+.meta-card .plan { font-size: 13px; margin: 10px 0 4px; color: var(--text); }
+.meta-card .secondary { margin-top: 8px; }
+
+/* ---------- inversiones 🪙 ---------- */
+.inv-cuenta { padding: 10px 0; border-bottom: 1px solid #f0edf9; }
+body.dark .inv-cuenta { border-bottom-color: #322a49; }
+.inv-cuenta:last-of-type { border-bottom: none; }
+.inv-head { display: flex; justify-content: space-between; align-items: center; font-size: 14.5px; }
+.inv-datos { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; font-size: 12.5px; color: var(--muted); }
+.inv-datos b { color: var(--text); }
+
 /* ---------- nav ---------- */
 .bottomnav {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;

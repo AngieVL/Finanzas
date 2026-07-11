@@ -321,7 +321,7 @@ async function guardar() {
     queue.push(mov);
     localStorage.setItem('queue', JSON.stringify(queue));
     renderQueue();
-    toast('📴 Sin conexión: guardado en pendientes, se enviará solo');
+    toast('⏳ No se pudo guardar ahora (sin señal o Google con problemas). Quedó en pendientes y se enviará solo ✓');
   }
 }
 
@@ -457,11 +457,12 @@ function renderResTab(tab) {
   rtabActivo = tab;
   document.querySelectorAll('#res-tabs button').forEach(b =>
     b.classList.toggle('active', b.dataset.rtab === tab));
-  ['mes', 'tend', 'patri'].forEach(t =>
+  ['mes', 'tend', 'patri', 'metas'].forEach(t =>
     $('rtab-' + t).classList.toggle('hidden', t !== tab));
   if (tab === 'mes') renderResumen();
   if (tab === 'tend') renderTendencias();
   if (tab === 'patri') { patriItems = null; renderPatrimonio(); }
+  if (tab === 'metas') renderMetas();
 }
 
 function moverMes(delta) {
@@ -581,9 +582,11 @@ let patriItems = null; // items del editor en memoria
 async function renderPatrimonio() {
   const box = $('rtab-patri');
   box.innerHTML = '<div class="card">Cargando... 💎</div>';
-  let p;
+  let p, inv;
   try { p = await api({ action: 'patrimonio_get' }); }
   catch (e) { box.innerHTML = `<div class="card">Sin conexión: ${e.message}</div>`; return; }
+  try { inv = await api({ action: 'inversiones_get' }); }
+  catch (e) { inv = { cuentas: [], aportes: [], itemsPatrimonio: [] }; }
   const meses = p.meses || [];
   const ultimo = meses[meses.length - 1];
   const previo = meses[meses.length - 2];
@@ -651,6 +654,42 @@ async function renderPatrimonio() {
       <button id="patri-save" class="primary" style="width:100%">Guardar patrimonio ✓</button>
     </div>`;
 
+  // --- inversiones 🪙 ---
+  html += '<div class="card"><h3>🪙 Mis inversiones</h3>';
+  if (!inv.cuentas.length) {
+    html += '<p class="hint">Registra cada plata que metas a una inversión (Insights, BTC, Fiducuenta...) y la app calculará cuánto has ganado comparando con tu Patrimonio. 💡 Usa el <b>mismo nombre</b> que le pones al activo en tu patrimonio.</p>';
+  } else {
+    inv.cuentas.forEach(c => {
+      const tieneValor = c.valorActual !== null;
+      html += `
+        <div class="inv-cuenta">
+          <div class="inv-head"><b>${c.cuenta}</b>
+            ${tieneValor && c.ganancia !== null ? `<span class="delta ${c.ganancia >= 0 ? 'pos' : 'neg'}">${c.ganancia >= 0 ? '▲' : '▼'} ${fmt(Math.abs(c.ganancia))}${c.rendimiento !== null ? ' (' + (c.ganancia >= 0 ? '+' : '−') + Math.abs(c.rendimiento) + '%)' : ''}</span>` : ''}
+          </div>
+          <div class="inv-datos">
+            <span>💵 Aportado: <b>${fmt(c.aportado)}</b></span>
+            <span>${tieneValor ? `📈 Vale hoy: <b>${fmt(c.valorActual)}</b>` : '📈 Valor: agrégalo en tu patrimonio con este mismo nombre'}</span>
+          </div>
+        </div>`;
+    });
+    html += `<p class="hint">El "vale hoy" sale de tu último registro de Patrimonio${inv.mesValor ? ' (' + mesCorto(inv.mesValor) + ')' : ''}.</p>`;
+  }
+  html += `
+    <div class="cat-form" style="margin-top:10px">
+      <input id="inv-cuenta" type="text" list="inv-sugerencias" placeholder="¿A cuál inversión? (ej: BTC)">
+      <datalist id="inv-sugerencias">${(inv.itemsPatrimonio || []).map(i => `<option value="${i}">`).join('')}</datalist>
+      <input id="inv-monto" type="text" inputmode="numeric" placeholder="¿Cuánto metiste? (negativo si retiraste)">
+      <button id="inv-add" class="primary">+ Registrar aporte</button>
+    </div>`;
+  if (inv.aportes && inv.aportes.length) {
+    html += '<details style="margin-top:10px"><summary class="hint" style="cursor:pointer">Ver últimos aportes</summary>';
+    inv.aportes.slice(0, 10).forEach(a => {
+      html += `<div class="patri-hist"><span>${a.fecha} · ${a.cuenta}</span><span><b>${a.monto < 0 ? '−' : '+'}${fmt(Math.abs(a.monto))}</b> <button class="del inv-del" data-id="${a.id}">✕</button></span></div>`;
+    });
+    html += '</details>';
+  }
+  html += '</div>';
+
   // --- historial ---
   if (meses.length) {
     let hist = '';
@@ -663,6 +702,26 @@ async function renderPatrimonio() {
   }
 
   box.innerHTML = html;
+
+  // eventos de inversiones
+  const invAddBtn = $('inv-add');
+  if (invAddBtn) invAddBtn.onclick = async () => {
+    const cuenta = $('inv-cuenta').value.trim();
+    const raw = ($('inv-monto').value || '').trim();
+    const monto = (raw.startsWith('-') ? -1 : 1) * (parseInt(raw.replace(/\D/g, ''), 10) || 0);
+    if (!cuenta || !monto) return toast('Escribe la inversión y el monto');
+    try {
+      await api({ action: 'inv_add', cuenta, monto });
+      toast(`✓ Aporte registrado: ${fmt(Math.abs(monto))} en ${cuenta}`);
+      renderPatrimonio();
+    } catch (e) { toast('Error: ' + e.message); }
+  };
+  box.querySelectorAll('.inv-del').forEach(b => b.onclick = async (e) => {
+    e.preventDefault();
+    if (!confirm('¿Eliminar este aporte?')) return;
+    try { await api({ action: 'inv_del', id: b.dataset.id }); toast('Eliminado'); renderPatrimonio(); }
+    catch (err) { toast('Error: ' + err.message); }
+  });
 
   // eventos
   box.querySelectorAll('.ppt').forEach(c => c.onclick = () => {
@@ -689,6 +748,92 @@ async function renderPatrimonio() {
       toast(`✓ Patrimonio guardado: ${fmt(r.total)}`);
       patriItems = null;
       renderPatrimonio();
+    } catch (e) { toast('Error: ' + e.message); }
+  };
+}
+
+// ---------------- metas de ahorro 🎯 ----------------
+function mesesHasta(fechaStr) {
+  if (!fechaStr || !/^\d{4}-\d{2}/.test(fechaStr)) return null;
+  const limite = new Date(fechaStr + 'T12:00:00');
+  const hoy = new Date();
+  return Math.max((limite.getFullYear() - hoy.getFullYear()) * 12 + limite.getMonth() - hoy.getMonth(), 0);
+}
+
+async function renderMetas() {
+  const box = $('rtab-metas');
+  const st = await refreshState();
+  const metas = (st && st.metas) || [];
+  let html = '';
+
+  if (!metas.length) {
+    html += '<div class="card"><p class="hint">Crea tu primera meta de ahorro: un viaje ✈️, la cuota inicial de tu casa 🏡, lo que sueñes. La app te dirá cuánto ahorrar cada mes y te lo recordará los días 1 y 15 💜</p></div>';
+  }
+  metas.forEach(m => {
+    const pct = m.objetivo > 0 ? Math.min(Math.round(m.ahorrado / m.objetivo * 100), 100) : 0;
+    const falta = Math.max(m.objetivo - m.ahorrado, 0);
+    const meses = mesesHasta(m.fecha);
+    const lograda = m.ahorrado >= m.objetivo;
+    let plan = '';
+    if (lograda) plan = '🎉 ¡META LOGRADA!';
+    else if (meses === null) plan = `Te faltan ${fmt(falta)}`;
+    else if (meses === 0) plan = `⏰ ¡La fecha llegó! Te faltan ${fmt(falta)}`;
+    else plan = `Te faltan ${fmt(falta)} · ahorra ~<b>${fmt(Math.ceil(falta / meses))}/mes</b> (${meses} mes${meses > 1 ? 'es' : ''} restantes)`;
+    html += `
+      <div class="card meta-card ${lograda ? 'lograda' : ''}">
+        <div class="meta-head">
+          <h3>${m.nombre}</h3>
+          <button class="del meta-del" data-id="${m.id}">✕</button>
+        </div>
+        <div class="info-meta">
+          <span class="pct-grande">${pct}%</span>
+          <span>${fmt(m.ahorrado)} de <b>${fmt(m.objetivo)}</b>${m.fecha ? ` · para el ${m.fecha}` : ''}</span>
+        </div>
+        <div class="barra alta"><div class="${lograda ? '' : 'meta'}" style="width:${pct}%; ${lograda ? '' : 'background:var(--chart-gasto)'}"></div></div>
+        <p class="plan">${plan}</p>
+        ${lograda ? '' : `<button class="secondary meta-abonar" data-id="${m.id}">💵 Abonar a esta meta</button>`}
+      </div>`;
+  });
+
+  html += `
+    <div class="card">
+      <h3>➕ Nueva meta</h3>
+      <label>¿Qué quieres lograr?</label>
+      <input id="meta-nombre" type="text" placeholder="Ej: Viaje a San Andrés ✈️">
+      <label>¿Cuánto necesitas?</label>
+      <input id="meta-objetivo" type="text" inputmode="numeric" placeholder="Ej: 3.000.000">
+      <label>¿Para cuándo? (opcional)</label>
+      <input id="meta-fecha" type="date">
+      <button id="meta-crear" class="primary" style="width:100%">Crear meta 🎯</button>
+    </div>`;
+
+  box.innerHTML = html;
+
+  box.querySelectorAll('.meta-del').forEach(b => b.onclick = async () => {
+    if (!confirm('¿Eliminar esta meta?')) return;
+    try { await api({ action: 'meta_del', id: b.dataset.id }); toast('Meta eliminada'); renderMetas(); }
+    catch (e) { toast('Error: ' + e.message); }
+  });
+  box.querySelectorAll('.meta-abonar').forEach(b => b.onclick = async () => {
+    const v = prompt('¿Cuánto abonas a la meta?');
+    if (v === null) return;
+    const monto = parseInt(v.replace(/\D/g, ''), 10) || 0;
+    if (!monto) return;
+    try {
+      const r = await api({ action: 'meta_abonar', id: b.dataset.id, monto });
+      toast('✓ Abonado. Llevas ' + fmt(r.ahorrado));
+      renderMetas();
+    } catch (e) { toast('Error: ' + e.message); }
+  });
+  $('meta-crear').onclick = async () => {
+    const nombre = $('meta-nombre').value.trim();
+    const objetivo = parseInt(($('meta-objetivo').value || '').replace(/\D/g, ''), 10) || 0;
+    const fecha = $('meta-fecha').value;
+    if (!nombre || !objetivo) return toast('Ponle nombre y monto a tu meta');
+    try {
+      await api({ action: 'meta_add', nombre, objetivo, fecha });
+      toast('✓ Meta creada: ' + nombre);
+      renderMetas();
     } catch (e) { toast('Error: ' + e.message); }
   };
 }
