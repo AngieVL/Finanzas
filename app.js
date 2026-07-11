@@ -911,6 +911,69 @@ async function guardarWhatsApp() {
 }
 
 // --------- editor de categorías ---------
+// --- mantener presionado: helper ---
+function longPress(el, fn) {
+  let timer = null, x0 = 0, y0 = 0;
+  el.addEventListener('pointerdown', e => {
+    x0 = e.clientX; y0 = e.clientY;
+    timer = setTimeout(() => {
+      timer = null;
+      if (navigator.vibrate) navigator.vibrate(40);
+      fn();
+    }, 550);
+  });
+  const cancelar = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  el.addEventListener('pointerup', cancelar);
+  el.addEventListener('pointerleave', cancelar);
+  el.addEventListener('pointermove', e => {
+    if (Math.abs(e.clientX - x0) > 10 || Math.abs(e.clientY - y0) > 10) cancelar();
+  });
+  el.addEventListener('contextmenu', e => e.preventDefault());
+}
+
+// --- menú de acciones (hoja inferior) ---
+function actionSheet(titulo, acciones) {
+  const ov = document.createElement('div');
+  ov.className = 'sheet-overlay';
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = `<h4>${titulo}</h4>`;
+  acciones.concat([{ label: 'Cancelar', fn: null }]).forEach(a => {
+    const b = document.createElement('button');
+    b.textContent = a.label;
+    if (a.destructivo) b.classList.add('destructivo');
+    b.onclick = () => { ov.remove(); if (a.fn) a.fn(); };
+    sheet.appendChild(b);
+  });
+  ov.appendChild(sheet);
+  ov.onclick = e => { if (e.target === ov) ov.remove(); };
+  document.body.appendChild(ov);
+}
+
+let ordenMode = false;
+let ordenLista = null;
+
+async function eliminarCategoria(cat) {
+  if (!confirm(`¿Eliminar "${cat}"?\nSus movimientos históricos pasarán a "Otros".`)) return;
+  try {
+    const r = await api({ action: 'cat_delete', categoria: cat });
+    toast(`✓ Eliminada. ${r.reasignados} movimiento(s) pasaron a ${r.destino}`);
+    await refreshState(); renderCatsConfig(); renderChips();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+function moverCategoria(cat, dir) {
+  // mueve dentro de su grupo (intercambia con la vecina del mismo grupo)
+  const i = ordenLista.findIndex(p => p.categoria === cat);
+  if (i < 0) return;
+  const g = ordenLista[i].grupo;
+  let j = i + dir;
+  while (j >= 0 && j < ordenLista.length && ordenLista[j].grupo !== g) j += dir;
+  if (j < 0 || j >= ordenLista.length) return;
+  [ordenLista[i], ordenLista[j]] = [ordenLista[j], ordenLista[i]];
+  renderCatsConfig();
+}
+
 function renderCatsConfig() {
   const box = $('cats-lista');
   if (!state || !state.presupuesto || !state.presupuesto.length) {
@@ -918,23 +981,81 @@ function renderCatsConfig() {
     return;
   }
   const grupos = ['GASTOS', 'OBLIGACIONES', 'GUSTOS', 'PROVISIONES', 'INGRESOS'];
+  const pres = (ordenMode && ordenLista) ? ordenLista : state.presupuesto;
   let html = '';
+  let totalEgresos = 0, totalIngresos = 0;
+
   grupos.forEach(g => {
-    const cats = state.presupuesto.filter(p => p.grupo === g);
+    const cats = pres.filter(p => p.grupo === g);
     if (!cats.length) return;
+    const sub = cats.reduce((s, p) => s + (p.mensual || 0), 0);
+    if (g === 'INGRESOS') totalIngresos += sub; else totalEgresos += sub;
     html += `<div class="cat-grupo-titulo">${GROUP_EMOJI[g]} ${g}</div>`;
     cats.forEach(p => {
-      html += `
-        <div class="cat-item">
-          <button class="emo" data-cat="${p.categoria}" title="Cambiar ícono">${emoji(p.categoria, p.grupo)}</button>
-          <span class="nom">${p.categoria}</span>
-          <span class="pres">${p.mensual ? fmt(p.mensual) : ''}</span>
-          <button class="cat-ren" data-cat="${p.categoria}" title="Renombrar">✏️</button>
-          <button class="cat-mon" data-cat="${p.categoria}" data-m="${p.mensual}" title="Presupuesto">💲</button>
-        </div>`;
+      if (ordenMode) {
+        html += `
+          <div class="cat-item orden">
+            <span class="nom">${emoji(p.categoria, p.grupo)} ${p.categoria}</span>
+            <button class="mover" data-cat="${p.categoria}" data-dir="-1">▲</button>
+            <button class="mover" data-cat="${p.categoria}" data-dir="1">▼</button>
+          </div>`;
+      } else {
+        html += `
+          <div class="cat-item presionable" data-cat="${p.categoria}">
+            <button class="emo" data-cat="${p.categoria}" title="Cambiar ícono">${emoji(p.categoria, p.grupo)}</button>
+            <span class="nom">${p.categoria}</span>
+            <span class="pres">${p.mensual ? fmt(p.mensual) : ''}</span>
+            <button class="cat-ren" data-cat="${p.categoria}" title="Renombrar">✏️</button>
+            <button class="cat-mon" data-cat="${p.categoria}" data-m="${p.mensual}" title="Presupuesto">💲</button>
+          </div>`;
+      }
     });
+    html += `<div class="cat-subtotal"><span>Total ${g.toLowerCase()}</span><b>${fmt(sub)}</b></div>`;
   });
+
+  // totales generales y superávit
+  const superavit = totalIngresos - totalEgresos;
+  html += `
+    <div class="cat-totales">
+      <div class="fila"><span>💸 TOTAL EGRESOS presupuestados</span><b>${fmt(totalEgresos)}</b></div>
+      <div class="fila"><span>💰 Ingresos presupuestados</span><b>${fmt(totalIngresos)}</b></div>
+      ${totalIngresos > 0 ? `
+      <div class="fila superavit ${superavit >= 0 ? 'pos' : 'neg'}">
+        <span>${superavit >= 0 ? '✅ SUPERÁVIT' : '🚨 DÉFICIT'}</span><b>${fmt(superavit)}</b>
+      </div>` : '<p class="hint">💡 Para ver tu superávit, ponle presupuesto mensual a tus ingresos: toca 💲 en "Salario fijo" y escribe cuánto recibes al mes.</p>'}
+      ${superavit < 0 && totalIngresos > 0 ? '<p class="hint" style="color:var(--red)">Tu presupuesto gasta más de lo que ingresa. Ajusta las categorías hasta que el superávit vuelva a ser positivo.</p>' : ''}
+    </div>`;
+
+  if (ordenMode) {
+    html += `<button id="orden-listo" class="primary" style="width:100%;margin-top:10px">✓ Guardar este orden</button>
+             <button id="orden-cancelar" class="secondary" style="margin-top:8px">Cancelar</button>`;
+  } else {
+    html = `<p class="hint" style="margin-bottom:4px">💡 Mantén presionada una categoría para eliminarla o reordenarla.</p>` + html;
+  }
   box.innerHTML = html;
+
+  if (ordenMode) {
+    box.querySelectorAll('.mover').forEach(b => b.onclick = () => moverCategoria(b.dataset.cat, Number(b.dataset.dir)));
+    $('orden-listo').onclick = async () => {
+      try {
+        await api({ action: 'cat_reorder', orden: ordenLista.map(p => p.categoria) });
+        toast('✓ Orden guardado');
+        ordenMode = false; ordenLista = null;
+        await refreshState(); renderCatsConfig(); renderChips();
+      } catch (e) { toast('Error: ' + e.message); }
+    };
+    $('orden-cancelar').onclick = () => { ordenMode = false; ordenLista = null; renderCatsConfig(); };
+    return; // en modo orden no hay más handlers
+  }
+
+  // mantener presionado → menú
+  box.querySelectorAll('.presionable').forEach(el => longPress(el, () => {
+    const cat = el.dataset.cat;
+    actionSheet(`${emoji(cat)} ${cat}`, [
+      { label: '↕️ Reordenar categorías', fn: () => { ordenMode = true; ordenLista = state.presupuesto.map(p => ({ ...p })); renderCatsConfig(); } },
+      { label: '🗑️ Eliminar esta categoría', destructivo: true, fn: () => eliminarCategoria(cat) },
+    ]);
+  }));
 
   box.querySelectorAll('.emo').forEach(b => b.onclick = () => {
     const cat = b.dataset.cat;
