@@ -440,6 +440,67 @@ body.dark .inv-cuenta { border-bottom-color: #322a49; }
 .bottomnav button span { font-size: 21px; }
 .bottomnav button.active { color: var(--violet-dark); background: var(--violet-light); }
 
+/* ============================================================
+   💻 DISEÑO PARA PANTALLAS GRANDES (PC / tablet horizontal)
+   ============================================================ */
+@media (min-width: 900px) {
+  body { padding-bottom: 24px; padding-left: 100px; }
+
+  /* menú lateral en vez de barra inferior */
+  .bottomnav {
+    top: 0; bottom: 0; left: 0; right: auto; width: 92px;
+    flex-direction: column; justify-content: center; gap: 14px;
+    padding: 16px 10px;
+    box-shadow: 4px 0 20px rgba(87, 57, 159, .10);
+  }
+  body.dark .bottomnav { box-shadow: 4px 0 20px rgba(0, 0, 0, .35); }
+  .bottomnav button { max-width: none; flex: 0 0 auto; padding: 12px 4px; }
+
+  main { max-width: 1100px; padding: 20px 28px; }
+  .top { border-radius: 0 0 26px 26px; }
+
+  /* registrar: formulario a la izquierda, resumen y factura a la derecha */
+  #view-registrar {
+    display: grid; grid-template-columns: minmax(400px, 540px) 1fr;
+    gap: 18px; align-items: start;
+  }
+  #view-registrar .entry-card { grid-column: 1; }
+  #scan-review { grid-column: 2; grid-row: 1 / span 3; }
+  #queue-info { grid-column: 1; }
+  #mini-resumen { grid-column: 1; }
+
+  /* resumen: tarjetas en dos columnas */
+  #resumen-grupos, #resumen-deudas {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 14px; align-items: start;
+  }
+  #resumen-deudas { margin-top: 14px; }
+  #rtab-tend, #rtab-patri, #rtab-metas {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 14px; align-items: start;
+  }
+  #rtab-tend.hidden, #rtab-patri.hidden, #rtab-metas.hidden { display: none; }
+  #rtab-tend .card, #rtab-patri .card, #rtab-metas .card { margin-bottom: 0; }
+
+  /* movimientos en dos columnas */
+  #movs-lista { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+  #movs-lista .mov { margin-bottom: 0; }
+
+  /* configuración en dos columnas */
+  #view-config { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+  #view-config .card { margin-bottom: 0; }
+
+  /* chat centrado y cómodo */
+  #view-chat { max-width: 760px; margin: 0 auto; }
+  .chat-box { height: calc(100dvh - 300px); }
+  .chat-input-row { left: 130px; max-width: 700px; bottom: 24px; }
+
+  /* detalles de escala */
+  .totales .tot b { font-size: 17px; }
+  .chips button:hover, .bottomnav button:hover { filter: brightness(1.06); }
+  .card { padding: 18px 20px; }
+}
+
 /* ---------- toast ---------- */
 .toast {
   position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%);
