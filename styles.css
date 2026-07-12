@@ -380,6 +380,10 @@ body.dark .patri-row .del { background: #322a49; color: #cbbdf5; }
 body.dark .patri-hist { border-bottom-color: #322a49; }
 .patri-hist:last-child { border-bottom: none; }
 
+/* ---------- alcancías 🏦 ---------- */
+.alc-detalle { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.neg-txt, .neg-txt b { color: var(--red) !important; }
+
 /* ---------- metas 🎯 ---------- */
 .meta-card.lograda { border: 2px solid var(--green); }
 .meta-head { display: flex; justify-content: space-between; align-items: center; }

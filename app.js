@@ -390,7 +390,7 @@ async function renderResumen() {
     if (m.mes === mesVista && m.tipo === 'Gasto') tot[m.categoria] = (tot[m.categoria] || 0) + m.monto;
   });
 
-  const grupos = ['GASTOS', 'OBLIGACIONES', 'GUSTOS', 'PROVISIONES'];
+  const grupos = ['GASTOS', 'OBLIGACIONES', 'GUSTOS'];
   let html = '';
   grupos.forEach(g => {
     const cats = (st.presupuesto || []).filter(p => p.grupo === g);
@@ -414,13 +414,47 @@ async function renderResumen() {
     });
     html += `<div class="grupo-card"><h4><span>${g}</span><span>${fmt(gTot)} / ${fmt(gPres)}</span></h4>${rows}</div>`;
   });
+
+  // 🏦 PROVISIONES = alcancías: cada mes se les suma el aporte; los gastos salen del FONDO acumulado
+  const alc = st.alcancias || {};
+  const provCats = (st.presupuesto || []).filter(p => p.grupo === 'PROVISIONES');
+  if (provCats.length) {
+    const dispTotal = provCats.reduce((s, p) => s + (alc[p.categoria] ? alc[p.categoria].disponible : 0), 0);
+    let rows = '';
+    provCats.forEach(p => {
+      const a = alc[p.categoria];
+      if (!a) return;
+      const gastadoMes = tot[p.categoria] || 0;
+      const pctUsado = a.ahorrado > 0 ? Math.min(a.gastado / a.ahorrado, 1) : 0;
+      const negativa = a.disponible < 0;
+      rows += `
+        <div class="cat-row">
+          <div class="info">
+            <span class="nombre">${emoji(p.categoria)} ${p.categoria.replace('Provisión ', '')}</span>
+            <span class="valores ${negativa ? 'neg-txt' : ''}"><b>${negativa ? '−' : ''}${fmt(Math.abs(a.disponible))}</b> disponibles</span>
+          </div>
+          <div class="barra"><div class="${negativa ? 'over' : ''}" style="width:${Math.round(pctUsado * 100)}%; ${negativa ? '' : 'background:var(--chart-gasto)'}"></div></div>
+          <div class="alc-detalle">ahorras ${fmt(a.mensual)}/mes desde ${mesCorto(a.desde)} ${a.desde.slice(0, 4)}${gastadoMes ? ` · este mes gastaste ${fmt(gastadoMes)}` : ''}</div>
+        </div>`;
+    });
+    html += `
+      <div class="grupo-card">
+        <h4><span>🏦 PROVISIONES (alcancías)</span><span>${fmt(dispTotal)} disponibles</span></h4>
+        ${rows}
+        <p class="hint" style="margin-top:8px">Cada alcancía crece solita con tu aporte mensual. Tus compras salen del fondo acumulado — solo hay problema si una queda en negativo. Configúralas en ⚙️ Mis categorías (mantén presionada una provisión).</p>
+      </div>`;
+  }
+
   $('resumen-grupos').innerHTML = html;
   renderDeudas(st);
 
-  // banner si hay categorías pasadas (solo mes actual)
+  // banner si hay categorías pasadas (solo mes actual); las provisiones se miden por su alcancía
   if (mesVista === hoyMes()) {
-    const pasadas = (st.presupuesto || []).filter(p => p.mensual > 0 && (tot[p.categoria] || 0) >= p.mensual);
-    if (pasadas.length) showBanner(`🚨 Presupuesto superado en: ${pasadas.map(p => p.categoria).join(', ')}`, true);
+    const pasadas = (st.presupuesto || [])
+      .filter(p => p.grupo !== 'PROVISIONES' && p.grupo !== 'INGRESOS' && p.mensual > 0 && (tot[p.categoria] || 0) >= p.mensual)
+      .map(p => p.categoria);
+    Object.keys(alc).forEach(c => { if (alc[c].disponible < 0) pasadas.push(c.replace('Provisión ', '') + ' (alcancía en negativo)'); });
+    if (pasadas.length) showBanner(`🚨 Ojo con: ${pasadas.join(', ')}`, true);
   }
 }
 
@@ -1098,6 +1132,25 @@ function actionSheet(titulo, acciones) {
 let ordenMode = false;
 let ordenLista = null;
 
+async function configurarAlcancia(cat, p) {
+  const a = (state && state.alcancias && state.alcancias[cat]) || {};
+  const f = prompt(
+    `🏦 Alcancía de "${cat.replace('Provisión ', '')}"\n\n` +
+    `Cada mes se le suma tu aporte (${fmt(p.mensual)}).\n` +
+    `¿Cuánto tenía YA ahorrado ANTES de empezar a contar? (fondo inicial)`,
+    String(p.fondoInicial || 0));
+  if (f === null) return;
+  const fondo = parseInt(f.replace(/\D/g, ''), 10) || 0;
+  const d = prompt('¿Desde qué mes empieza a ahorrar? (formato: 2026-01)', p.desde || '2026-01');
+  if (d === null) return;
+  if (!/^\d{4}-\d{2}$/.test(d.trim())) return toast('El mes debe ser como 2026-01');
+  try {
+    await api({ action: 'cat_fondo', categoria: cat, fondo, desde: d.trim() });
+    toast('✓ Alcancía configurada');
+    await refreshState(); renderCatsConfig();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
 async function eliminarCategoria(cat) {
   if (!confirm(`¿Eliminar "${cat}"?\nSus movimientos históricos pasarán a "Otros".`)) return;
   try {
@@ -1196,10 +1249,16 @@ function renderCatsConfig() {
   // mantener presionado → menú
   box.querySelectorAll('.presionable').forEach(el => longPress(el, () => {
     const cat = el.dataset.cat;
-    actionSheet(`${emoji(cat)} ${cat}`, [
-      { label: '↕️ Reordenar categorías', fn: () => { ordenMode = true; ordenLista = state.presupuesto.map(p => ({ ...p })); renderCatsConfig(); } },
+    const p = state.presupuesto.find(x => x.categoria === cat);
+    const acciones = [];
+    if (p && p.grupo === 'PROVISIONES') {
+      acciones.push({ label: '🏦 Configurar alcancía (fondo y desde cuándo)', fn: () => configurarAlcancia(cat, p) });
+    }
+    acciones.push(
+      { label: '↕️ Reordenar categorías', fn: () => { ordenMode = true; ordenLista = state.presupuesto.map(x => ({ ...x })); renderCatsConfig(); } },
       { label: '🗑️ Eliminar esta categoría', destructivo: true, fn: () => eliminarCategoria(cat) },
-    ]);
+    );
+    actionSheet(`${emoji(cat)} ${cat}`, acciones);
   }));
 
   box.querySelectorAll('.emo').forEach(b => b.onclick = () => {
