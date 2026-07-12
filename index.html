@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="styles.css?v=11">
+<link rel="stylesheet" href="styles.css?v=12">
 </head>
 <body>
 
@@ -32,13 +32,15 @@
       <div class="tipo-toggle" id="tipo-toggle">
         <button data-tipo="Gasto" class="active">💸 Gasto</button>
         <button data-tipo="Ingreso">💰 Ingreso</button>
-        <button data-tipo="Por cobrar">🤝 Me deben</button>
+        <button data-tipo="Por cobrar">🤝 Personas</button>
       </div>
       <div class="entry-input-row">
         <input id="entry-input" type="text" inputmode="text" autocomplete="off"
                placeholder="Ej: 15.000 transporte" />
         <button id="entry-mic" class="mic" title="Dictar">🎤</button>
+        <button id="entry-scan" class="mic" title="Escanear factura">📷</button>
       </div>
+      <input id="scan-file" type="file" accept="image/*" capture="environment" class="hidden">
       <div class="entry-row">
         <input id="entry-fecha" type="date" />
         <div id="monto-preview" class="monto-preview"></div>
@@ -47,6 +49,7 @@
       <div id="cat-chips" class="chips"></div>
       <button id="btn-guardar" class="primary big">Guardar ✓</button>
     </div>
+    <div id="scan-review" class="hidden"></div>
     <div id="queue-info" class="queue-info hidden"></div>
     <div class="card mini-resumen" id="mini-resumen"></div>
   </section>
@@ -179,6 +182,6 @@
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="app.js?v=11"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>

@@ -380,6 +380,24 @@ body.dark .patri-row .del { background: #322a49; color: #cbbdf5; }
 body.dark .patri-hist { border-bottom-color: #322a49; }
 .patri-hist:last-child { border-bottom: none; }
 
+/* ---------- personas: 4 acciones ---------- */
+.acciones-personas { width: 100%; flex-wrap: wrap; margin-bottom: 6px; }
+.acciones-personas button { flex: 1 1 44%; font-size: 12px; padding: 9px 2px; }
+.deuda-row .saldo.custodia { color: var(--violet-dark); }
+body.dark .deuda-row .saldo.custodia { color: #cbbdf5; }
+.deuda-row .saldo.custodia.negc { color: var(--red); }
+
+/* ---------- escáner de facturas 📷 ---------- */
+.scan-item {
+  display: grid; grid-template-columns: 22px 1fr 132px; gap: 8px;
+  align-items: center; padding: 8px 0; border-bottom: 1px solid #f0edf9;
+}
+body.dark .scan-item { border-bottom-color: #322a49; }
+.scan-item input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--violet); }
+.scan-info .d { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scan-info .v { font-size: 12px; color: var(--muted); }
+.scan-item select { padding: 8px; font-size: 12px; border-radius: 10px; }
+
 /* ---------- alcancías 🏦 ---------- */
 .alc-detalle { font-size: 11px; color: var(--muted); margin-top: 3px; }
 .neg-txt, .neg-txt b { color: var(--red) !important; }

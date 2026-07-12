@@ -43,7 +43,7 @@ const RULES = [
   [/servicio/i, 'Servicios'],
   [/internet/i, 'Internet'],
   [/\bdatos\b|plan datos/i, 'Datos móviles'],
-  [/supermercado|mercado|\bd1\b|\bara\b|\boxxo\b|fruta|exito|éxito/i, 'Mercado, aseo'],
+  [/supermercado|mercado|\bd1\b|\bara\b|\boxxo\b|fruta|exito|éxito|leche|\bpan\b|arroz|huevo|queso|carne|pollo|verdura|galleta|cereal|aseo|jab[oó]n|detergente|papel higi/i, 'Mercado, aseo'],
   [/comida tob+y/i, 'Comida Tobby'],
   [/\bgym\b/i, 'GYM'],
   [/danza|nataci/i, 'Danza'],
@@ -54,7 +54,7 @@ const RULES = [
   [/abogada|declaraci/i, 'Abogada declaración renta'],
   [/impuesto|4x1000/i, 'Impuestos'],
   [/tob+y|guacal|veterinari|purgante|pulgas/i, 'Provisión Tobby'],
-  [/claude|adobe|photoshop|lightroom|spotify|wix\b|\bpc\b|celular|monitor|teclado|mouse/i, 'Provisión Tecnología'],
+  [/claude|adobe|photoshop|lightroom|spotify|wix\b|\bpc\b|celular|monitor|teclado|mouse|aud[ií]fono|cargador|\busb\b|jbl/i, 'Provisión Tecnología'],
   [/pastilla|anticonceptiv|l[aá]ser|dermaskin|dermat[oó]log|ortodoncia|ortorio|orto rio|caries|odontolog|cabello|maquillaje|skincare|crema|shampoo|pesta[ñn]|u[ñn]as|labial|esmalte|bloqueador|centrum|suplemento|medicament|drogueri|farmacia|cita m[eé]dica|psic[oó]log|terapia|perfume|loci[oó]n/i, 'Provisión Belleza/salud'],
   [/viaje|airbnb|hotel|paseo|tiquete|vuelo|playa/i, 'Provisión Viajes'],
   [/regalo|cumple|navidad|navide|ancheta/i, 'Provisión Regalos'],
@@ -232,12 +232,10 @@ function renderChips() {
   const box = $('cat-chips');
   box.innerHTML = '';
   if (tipoSel === 'Por cobrar') {
-    // acción: nueva deuda o abono
+    // acción: préstamos (mi plata) o custodia (su plata que yo guardo)
     const acciones = document.createElement('div');
-    acciones.className = 'tipo-toggle';
-    acciones.style.marginBottom = '10px';
-    acciones.style.width = '100%';
-    [['deuda', '🤝 Me deben (presté)'], ['abono', '💰 Me pagaron']].forEach(([val, lbl]) => {
+    acciones.className = 'tipo-toggle acciones-personas';
+    [['deuda', '🤝 Presté'], ['abono', '💰 Me pagó'], ['guardo', '👝 Recibí su plata'], ['entrego', '📤 Le entregué / gastó']].forEach(([val, lbl]) => {
       const b = document.createElement('button');
       b.textContent = lbl;
       b.className = accionDeuda === val ? 'active' : '';
@@ -245,6 +243,17 @@ function renderChips() {
       acciones.appendChild(b);
     });
     box.appendChild(acciones);
+    // pista según la acción
+    const pista = document.createElement('p');
+    pista.className = 'hint';
+    pista.style.width = '100%';
+    pista.textContent = {
+      deuda: 'Prestaste TU plata: te la deben.',
+      abono: 'Te devolvieron plata que habías prestado.',
+      guardo: 'Entró plata DE OTRA persona a tus cuentas (tú se la guardas).',
+      entrego: 'Le diste o gastó de SU plata guardada (transferencia, compra con tu tarjeta...).',
+    }[accionDeuda];
+    box.appendChild(pista);
     // persona
     const label = document.createElement('div');
     label.className = 'cat-label';
@@ -256,10 +265,13 @@ function renderChips() {
     chips.style.width = '100%';
     const personas = new Set(['Patri', 'Iduar', 'Ángela']);
     Object.keys((state && state.deudas) || {}).forEach(p => personas.add(p));
+    Object.keys((state && state.custodias) || {}).forEach(p => personas.add(p));
     personas.forEach(p => {
       const b = document.createElement('button');
-      const saldo = state && state.deudas && state.deudas[p] ? state.deudas[p].saldo : 0;
-      b.textContent = `👤 ${p}${saldo > 0 ? ' · ' + fmt(saldo) : ''}`;
+      const esCustodia = accionDeuda === 'guardo' || accionDeuda === 'entrego';
+      const fuente = esCustodia ? (state && state.custodias) : (state && state.deudas);
+      const saldo = fuente && fuente[p] ? fuente[p].saldo : 0;
+      b.textContent = `👤 ${p}${saldo !== 0 ? ' · ' + (esCustodia ? '👝' : '') + fmt(saldo) : ''}`;
       b.className = p === personaSel ? 'sel' : '';
       b.onclick = () => { personaSel = p; renderChips(); };
       chips.appendChild(b);
@@ -297,18 +309,19 @@ function onEntryInput() {
 async function guardar() {
   const p = parseEntry($('entry-input').value);
   if (!p || !p.monto) return toast('Escribe el monto, ej: 15.000 transporte');
-  let tipo = tipoSel, categoria;
+  let tipo = tipoSel, categoria, grupo;
   if (tipoSel === 'Por cobrar') {
     if (!personaSel) return toast('Elige quién 👤');
-    tipo = accionDeuda === 'abono' ? 'Abono' : 'Por cobrar';
+    tipo = { deuda: 'Por cobrar', abono: 'Abono', guardo: 'Guardo', entrego: 'Entrego' }[accionDeuda];
     categoria = personaSel;
+    grupo = (accionDeuda === 'guardo' || accionDeuda === 'entrego') ? 'PLATA AJENA' : 'POR COBRAR';
   } else {
     categoria = catSel || clasificar(p.desc, tipo);
+    grupo = grupoDe(categoria, tipo);
   }
   const mov = {
     action: 'add', fecha: $('entry-fecha').value || hoyFecha(), tipo,
-    categoria, grupo: tipoSel === 'Por cobrar' ? 'POR COBRAR' : grupoDe(categoria, tipo),
-    monto: p.monto, descripcion: p.desc,
+    categoria, grupo, monto: p.monto, descripcion: p.desc,
   };
   $('entry-input').value = ''; $('monto-preview').textContent = '';
   catSel = null; catManual = false; $('cat-auto').classList.add('hidden'); renderChips();
@@ -460,29 +473,164 @@ async function renderResumen() {
 
 function renderDeudas(st) {
   const box = $('resumen-deudas');
+  let html = '';
+
+  // 🤝 préstamos: MI plata que me deben
   const deudas = (st && st.deudas) || {};
   const personas = Object.keys(deudas).filter(p => deudas[p].debe > 0 || deudas[p].abonado > 0);
-  if (!personas.length) { box.innerHTML = ''; return; }
-  personas.sort((a, b) => deudas[b].saldo - deudas[a].saldo);
-  const total = personas.reduce((s, p) => s + Math.max(deudas[p].saldo, 0), 0);
-  let rows = '';
-  personas.forEach(p => {
-    const d = deudas[p];
-    rows += `
-      <div class="deuda-row">
-        <div style="flex:1">
-          <div class="quien">👤 ${p}</div>
-          <div class="detalle">prestado ${fmt(d.debe)} · pagado ${fmt(d.abonado)}</div>
+  if (personas.length) {
+    personas.sort((a, b) => deudas[b].saldo - deudas[a].saldo);
+    const total = personas.reduce((s, p) => s + Math.max(deudas[p].saldo, 0), 0);
+    let rows = '';
+    personas.forEach(p => {
+      const d = deudas[p];
+      rows += `
+        <div class="deuda-row">
+          <div style="flex:1">
+            <div class="quien">👤 ${p}</div>
+            <div class="detalle">prestado ${fmt(d.debe)} · pagado ${fmt(d.abonado)}</div>
+          </div>
+          <span class="saldo ${d.saldo <= 0 ? 'cero' : ''}">${d.saldo <= 0 ? '✓ a paz' : fmt(d.saldo)}</span>
+        </div>`;
+    });
+    html += `
+      <div class="grupo-card">
+        <h4><span>🤝 ME DEBEN (mi plata)</span><span>${fmt(total)}</span></h4>
+        ${rows}
+      </div>`;
+  }
+
+  // 👝 custodia: plata de OTROS que vive en mis cuentas
+  const cust = (st && st.custodias) || {};
+  const dueños = Object.keys(cust).filter(p => cust[p].recibido > 0 || cust[p].entregado > 0);
+  if (dueños.length) {
+    dueños.sort((a, b) => cust[b].saldo - cust[a].saldo);
+    const totalC = dueños.reduce((s, p) => s + cust[p].saldo, 0);
+    let rows = '';
+    dueños.forEach(p => {
+      const c = cust[p];
+      rows += `
+        <div class="deuda-row">
+          <div style="flex:1">
+            <div class="quien">👝 ${p}</div>
+            <div class="detalle">recibí ${fmt(c.recibido)} · le entregué ${fmt(c.entregado)}</div>
+          </div>
+          <span class="saldo custodia ${c.saldo < 0 ? 'negc' : ''}">${c.saldo < 0 ? '−' : ''}${fmt(Math.abs(c.saldo))}</span>
         </div>
-        <span class="saldo ${d.saldo <= 0 ? 'cero' : ''}">${d.saldo <= 0 ? '✓ a paz' : fmt(d.saldo)}</span>
+        ${c.saldo < 0 ? '<p class="hint" style="color:var(--red)">Le has entregado más de lo que tenía guardado — ese excedente salió de TU plata (considera registrarlo como préstamo 🤝).</p>' : ''}`;
+    });
+    html += `
+      <div class="grupo-card">
+        <h4><span>👝 PLATA QUE GUARDO (de otros)</span><span>${fmt(totalC)}</span></h4>
+        ${rows}
+        <p class="hint" style="margin-top:8px">Plata ajena que vive en tus cuentas (ej: la pensión de tu mamá). No cuenta como tuya ni afecta tu presupuesto.</p>
+      </div>`;
+  }
+
+  box.innerHTML = html;
+}
+
+// ---------------- escanear factura 📷 ----------------
+async function comprimirImagen(file) {
+  const img = await new Promise((res, rej) => {
+    const i = new Image();
+    i.onload = () => res(i);
+    i.onerror = () => rej(new Error('No pude leer la imagen'));
+    i.src = URL.createObjectURL(file);
+  });
+  const escala = Math.min(1, 1400 / Math.max(img.width, img.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(img.width * escala);
+  c.height = Math.round(img.height * escala);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  URL.revokeObjectURL(img.src);
+  return c.toDataURL('image/jpeg', 0.82).split(',')[1];
+}
+
+function initScan() {
+  $('entry-scan').onclick = () => $('scan-file').click();
+  $('scan-file').onchange = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    toast('📷 Leyendo tu factura... dame ~10 segundos');
+    try {
+      const b64 = await comprimirImagen(file);
+      const r = await api({ action: 'scan_factura', imagen: b64, mime: 'image/jpeg' });
+      renderScanReview(r);
+      toast(`✓ Leí ${r.items.length} artículos — revísalos abajo`);
+    } catch (err) {
+      toast('Ups: ' + (err.message === 'NO_KEY' ? 'falta la key de Gemini en ⚙️' : err.message));
+    }
+  };
+}
+
+function renderScanReview(r) {
+  const box = $('scan-review');
+  const cats = getCats('Gasto');
+  const personas = new Set(['Patri', 'Iduar', 'Ángela']);
+  Object.keys((state && state.deudas) || {}).forEach(p => personas.add(p));
+  Object.keys((state && state.custodias) || {}).forEach(p => personas.add(p));
+  let opciones = cats.map(c => `<option value="cat:${c.c}">${c.e} ${c.c.replace('Provisión ', 'P. ')}</option>`).join('');
+  opciones += `<optgroup label="🤝 Me lo debe...">${[...personas].map(p => `<option value="deuda:${p}">🤝 ${p}</option>`).join('')}</optgroup>`;
+
+  let html = `
+    <div class="card">
+      <h3>🧾 ${r.comercio || 'Tu factura'} — ${fmt(r.total || r.items.reduce((s, i) => s + i.valor, 0))}</h3>
+      <p class="hint">Revisa cada artículo: desmarca los que no vayan, y elige la categoría o quién te lo debe.</p>`;
+  r.items.forEach((it, i) => {
+    html += `
+      <div class="scan-item">
+        <input type="checkbox" checked class="scan-chk" data-i="${i}">
+        <div class="scan-info">
+          <div class="d">${it.descripcion}</div>
+          <div class="v">${fmt(it.valor)}</div>
+        </div>
+        <select class="scan-cat" data-i="${i}">${opciones}</select>
       </div>`;
   });
-  box.innerHTML = `
-    <div class="grupo-card">
-      <h4><span>🤝 ME DEBEN</span><span>${fmt(total)}</span></h4>
-      ${rows}
-      <p class="hint" style="margin-top:8px">Registra abonos desde ✏️ Registrar → "Me deben" → "💰 Me pagaron"</p>
+  html += `
+      <button id="scan-guardar" class="primary big" style="margin-top:12px">Guardar artículos ✓</button>
+      <button id="scan-cancelar" class="secondary" style="margin-top:8px">Cancelar</button>
     </div>`;
+  box.innerHTML = html;
+  box.classList.remove('hidden');
+  box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  // sugerencia automática de categoría por artículo
+  box.querySelectorAll('.scan-cat').forEach(sel => {
+    const it = r.items[Number(sel.dataset.i)];
+    const sug = 'cat:' + clasificar(it.descripcion, 'Gasto');
+    sel.value = sug;
+    if (sel.value !== sug) sel.value = 'cat:Otros';
+  });
+
+  $('scan-cancelar').onclick = () => { box.classList.add('hidden'); box.innerHTML = ''; };
+  $('scan-guardar').onclick = async () => {
+    const fecha = $('entry-fecha').value || hoyFecha();
+    const items = [];
+    box.querySelectorAll('.scan-chk').forEach(chk => {
+      if (!chk.checked) return;
+      const i = Number(chk.dataset.i);
+      const it = r.items[i];
+      const val = box.querySelector(`.scan-cat[data-i="${i}"]`).value;
+      const sep = val.indexOf(':');
+      const modo = val.slice(0, sep), nombre = val.slice(sep + 1);
+      if (modo === 'deuda') {
+        items.push({ fecha, tipo: 'Por cobrar', grupo: 'POR COBRAR', categoria: nombre, monto: it.valor, descripcion: it.descripcion.toLowerCase() });
+      } else {
+        items.push({ fecha, tipo: 'Gasto', grupo: grupoDe(nombre, 'Gasto'), categoria: nombre, monto: it.valor, descripcion: it.descripcion.toLowerCase() });
+      }
+    });
+    if (!items.length) return toast('No hay artículos marcados');
+    try {
+      const res = await api({ action: 'add_batch', items });
+      toast(`✓ ${res.agregados} artículo(s) guardados en sus categorías`);
+      box.classList.add('hidden');
+      box.innerHTML = '';
+      refreshState().then(() => { renderMini(); renderChips(); });
+    } catch (e) { toast('Error: ' + e.message); }
+  };
 }
 
 // ---------------- pestañas del resumen ----------------
@@ -880,7 +1028,7 @@ async function renderMovs() {
     !q || (m.descripcion || '').toLowerCase().includes(q) || (m.categoria || '').toLowerCase().includes(q));
   $('movs-lista').innerHTML = list.slice(0, 100).map(m => `
     <div class="mov">
-      <span class="emoji">${m.tipo === 'Ingreso' ? '💰' : m.tipo === 'Por cobrar' ? '🤝' : emoji(m.categoria)}</span>
+      <span class="emoji">${{ 'Ingreso': '💰', 'Por cobrar': '🤝', 'Abono': '💵', 'Guardo': '👝', 'Entrego': '📤', 'Reembolso': '🔄' }[m.tipo] || emoji(m.categoria)}</span>
       <div class="det">
         <div class="desc">${m.descripcion || m.categoria}</div>
         <div class="meta">${m.fecha} · ${m.categoria}</div>
@@ -1386,6 +1534,7 @@ function init() {
   // chat: conversaciones y voz
   renderChatBox();
   initVoz();
+  initScan();
   $('chat-nuevo').onclick = () => {
     chatActivoId = null;
     chatActivo(); // crea una nueva
