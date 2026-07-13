@@ -566,8 +566,13 @@ async function comprimirImagen(file) {
 }
 
 function initScan() {
-  $('entry-scan').onclick = () => $('scan-file').click();
-  $('scan-file').onchange = async (e) => {
+  $('entry-scan').onclick = () => {
+    actionSheet('🧾 Escanear factura', [
+      { label: '📷 Tomar una foto', fn: () => $('scan-file').click() },
+      { label: '🖼️ Elegir de la galería', fn: () => $('scan-file-galeria').click() },
+    ]);
+  };
+  const procesar = async (e) => {
     const file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
@@ -581,6 +586,8 @@ function initScan() {
       toast('Ups: ' + (err.message === 'NO_KEY' ? 'falta la key de Gemini en ⚙️' : err.message));
     }
   };
+  $('scan-file').onchange = procesar;
+  $('scan-file-galeria').onchange = procesar;
 }
 
 function renderScanReview(r) {
