@@ -157,11 +157,30 @@ function hoyFecha() {
 }
 function hoyMes() { return hoyFecha().slice(0, 7); }
 function fmt(n) { return '$' + Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+// adivinador de emoji por el nombre de la categoría (para las personalizadas)
+const EMOJI_SUGERIDOS = [
+  [/mascota|perr|gat|tobby|veterinaria/i, '🐶'], [/gym|gimnas|ejercicio|deporte/i, '🏋️'],
+  [/danza|baile/i, '💃'], [/nataci/i, '🏊'],
+  [/seguridad social|salud|m[eé]dic|eps|pensi[oó]n/i, '🏥'], [/belleza|est[eé]tica|u[ñn]as|cabello|spa/i, '💅'],
+  [/arriendo|vivienda|hogar|mueble|decoraci/i, '🏠'], [/servicio/i, '💡'], [/internet|wifi/i, '🌐'],
+  [/dato|celular|m[oó]vil/i, '📱'], [/mercado|aseo|super/i, '🛒'],
+  [/transporte|taxi|gasolina|carro|moto/i, '🚕'], [/restaurante|comida|antojo|caf[eé]/i, '🍔'],
+  [/ropa|moda|zapato|accesorio/i, '👗'], [/entretenimiento|cine|stream|juego/i, '🎬'],
+  [/educaci|curso|libro|estudio/i, '📚'], [/tecnolog|computador|\bpc\b/i, '💻'],
+  [/viaje|vacacion|paseo/i, '✈️'], [/regalo/i, '🎁'], [/emergencia/i, '🚨'],
+  [/independencia|inversi[oó]n|ahorro/i, '🏡'], [/mesada|mam[aá]|pap[aá]|abuel/i, '👵'],
+  [/donaci|diezmo|iglesia/i, '🙏'], [/impuesto|renta|abogad|declaraci/i, '🏛️'],
+  [/cuota|tarjeta|banco|cr[eé]dito|deuda/i, '💳'], [/salario|sueldo|n[oó]mina/i, '💼'],
+  [/freelance|extra/i, '✨'], [/beb[eé]|hij/i, '👶'], [/psic[oó]log|terapia/i, '🛋️'],
+];
+
 function emoji(cat, grupo) {
   // primero: el ícono que tú hayas elegido
   if (prefs.emojis && prefs.emojis[cat]) return prefs.emojis[cat];
   const x = CATS.concat(CATS_ING).find(c => c.c === cat);
   if (x) return x.e;
+  // adivinar por el nombre
+  for (const [re, e] of EMOJI_SUGERIDOS) if (re.test(cat)) return e;
   // ¿la renombraste? busca el emoji del nombre original
   const alias = (state && state.aliases) || {};
   for (const orig in alias) {
@@ -1301,6 +1320,23 @@ async function configurarAlcancia(cat, p) {
   } catch (e) { toast('Error: ' + e.message); }
 }
 
+function cambiarGrupo(cat, grupoActual) {
+  const nombres = { GASTOS: '🧾 Gasto fijo', OBLIGACIONES: '📌 Obligación', GUSTOS: '🛍️ Gusto', PROVISIONES: '🏦 Provisión (alcancía)', INGRESOS: '💰 Ingreso' };
+  const acciones = Object.keys(nombres)
+    .filter(g => g !== grupoActual)
+    .map(g => ({
+      label: nombres[g],
+      fn: async () => {
+        try {
+          const r = await api({ action: 'cat_move', categoria: cat, grupo: g });
+          toast(`✓ "${cat}" ahora es ${nombres[g]}. ${r.actualizados} movimiento(s) actualizados`);
+          await refreshState(); renderCatsConfig(); renderChips();
+        } catch (e) { toast('Error: ' + e.message); }
+      }
+    }));
+  actionSheet(`¿A qué grupo mover "${cat}"?`, acciones);
+}
+
 async function eliminarCategoria(cat) {
   if (!confirm(`¿Eliminar "${cat}"?\nSus movimientos históricos pasarán a "Otros".`)) return;
   try {
@@ -1378,7 +1414,10 @@ function renderCatsConfig() {
     html += `<button id="orden-listo" class="primary" style="width:100%;margin-top:10px">✓ Guardar este orden</button>
              <button id="orden-cancelar" class="secondary" style="margin-top:8px">Cancelar</button>`;
   } else {
-    html = `<p class="hint" style="margin-bottom:4px">💡 Mantén presionada una categoría para eliminarla o reordenarla.</p>` + html;
+    html = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+              <button id="btn-reordenar" class="chip-btn">↕️ Reordenar</button>
+              <span class="hint" style="flex:1">💡 o mantén presionada una categoría para más opciones (eliminar, cambiar de grupo...)</span>
+            </div>` + html;
   }
   box.innerHTML = html;
 
@@ -1396,6 +1435,13 @@ function renderCatsConfig() {
     return; // en modo orden no hay más handlers
   }
 
+  const btnReord = $('btn-reordenar');
+  if (btnReord) btnReord.onclick = () => {
+    ordenMode = true;
+    ordenLista = state.presupuesto.map(x => ({ ...x }));
+    renderCatsConfig();
+  };
+
   // mantener presionado → menú
   box.querySelectorAll('.presionable').forEach(el => longPress(el, () => {
     const cat = el.dataset.cat;
@@ -1405,6 +1451,7 @@ function renderCatsConfig() {
       acciones.push({ label: '🏦 Configurar alcancía (fondo y desde cuándo)', fn: () => configurarAlcancia(cat, p) });
     }
     acciones.push(
+      { label: '📂 Cambiar de grupo', fn: () => cambiarGrupo(cat, p ? p.grupo : '') },
       { label: '↕️ Reordenar categorías', fn: () => { ordenMode = true; ordenLista = state.presupuesto.map(x => ({ ...x })); renderCatsConfig(); } },
       { label: '🗑️ Eliminar esta categoría', destructivo: true, fn: () => eliminarCategoria(cat) },
     );

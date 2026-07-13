@@ -183,6 +183,7 @@ function handle(req) {
       case 'cat_delete':   out = catDelete(req.categoria); break;
       case 'cat_reorder':  out = catReorder(req.orden); break;
       case 'cat_fondo':    out = catFondo(req.categoria, req.fondo, req.desde); break;
+      case 'cat_move':     out = catMove(req.categoria, req.grupo); break;
       case 'wipe_movimientos': out = wipeMovimientos(req.confirmar); break;
       case 'set_whatsapp': out = setWhatsapp(req.phone, req.key); break;
       case 'test_whatsapp': out = testWhatsapp(); break;
@@ -502,6 +503,37 @@ function catDelete(categoria) {
 
   buildDashboard(ss);
   return { ok: true, reasignados: reasignados, destino: destino };
+}
+
+function catMove(categoria, grupo) {
+  var validos = ['GASTOS', 'OBLIGACIONES', 'GUSTOS', 'PROVISIONES', 'INGRESOS'];
+  if (validos.indexOf(grupo) < 0) return { ok: false, error: 'Grupo inválido' };
+  var ss = ss_();
+  var shP = ss.getSheetByName('Presupuesto');
+  var cats = shP.getRange(2, 2, Math.max(shP.getLastRow() - 1, 1), 1).getValues();
+  var fila = -1;
+  for (var i = 0; i < cats.length; i++) {
+    if (cats[i][0] === categoria) { fila = i + 2; break; }
+  }
+  if (fila < 0) return { ok: false, error: 'No encontré la categoría' };
+  shP.getRange(fila, 1).setValue(grupo);
+
+  // actualizar el grupo en los movimientos históricos de esa categoría
+  // (sin tocar POR COBRAR ni PLATA AJENA, donde "categoría" es una persona)
+  var shM = ss.getSheetByName('Movimientos');
+  var n = shM.getLastRow() - 1, actualizados = 0;
+  if (n > 0) {
+    var rng = shM.getRange(2, 5, n, 2);
+    var vals = rng.getValues();
+    for (var j = 0; j < vals.length; j++) {
+      if (vals[j][1] === categoria && vals[j][0] !== 'POR COBRAR' && vals[j][0] !== 'PLATA AJENA') {
+        vals[j][0] = grupo; actualizados++;
+      }
+    }
+    if (actualizados) rng.setValues(vals);
+  }
+  buildDashboard(ss);
+  return { ok: true, actualizados: actualizados };
 }
 
 function catFondo(categoria, fondo, desde) {
