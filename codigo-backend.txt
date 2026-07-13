@@ -1,0 +1,1049 @@
+/**
+ * MIS FINANZAS — Backend (Google Apps Script)
+ * ------------------------------------------------
+ * Este script:
+ *  1. Crea la hoja de cálculo "Finanzas 2026" con Presupuesto, Movimientos,
+ *     Dashboard y Recordatorios (ejecuta setup() UNA sola vez).
+ *  2. Expone una API web para la app del celular (registrar/consultar movimientos).
+ *  3. Responde el chat asesor usando la API gratuita de Gemini.
+ *  4. Envía alertas por correo cuando una categoría se acerca al presupuesto
+ *     y recordatorios de fechas de pago (revisión diaria automática a las 7am).
+ */
+
+var TZ = 'America/Bogota';
+
+// ====== PRESUPUESTO INICIAL de ejemplo (edítalo luego desde la app o en la hoja "Presupuesto") ======
+var PRESUPUESTO_2026 = [
+  // [Grupo, Categoría, Presupuesto mensual]
+  ['GASTOS', 'Arriendo/Vivienda', 0],
+  ['GASTOS', 'Servicios', 0],
+  ['GASTOS', 'Internet', 0],
+  ['GASTOS', 'Datos móviles', 0],
+  ['GASTOS', 'Mercado, aseo', 0],
+  ['OBLIGACIONES', 'Deudas/Créditos', 0],
+  ['OBLIGACIONES', 'Donaciones', 0],
+  ['GUSTOS', 'Restaurantes', 0],
+  ['GUSTOS', 'Ropa', 0],
+  ['GUSTOS', 'Transporte', 0],
+  ['GUSTOS', 'Entretenimiento', 0],
+  ['GUSTOS', 'Otros', 0],
+  ['PROVISIONES', 'Provisión Tecnología', 0],
+  ['PROVISIONES', 'Provisión Salud/Belleza', 0],
+  ['PROVISIONES', 'Provisión Viajes', 0],
+  ['PROVISIONES', 'Provisión Regalos', 0],
+  ['PROVISIONES', 'Provisión Emergencias', 0],
+  ['INGRESOS', 'Salario fijo', 0],
+  ['INGRESOS', 'Ingresos extra', 0],
+  ['INGRESOS', 'Otros Ingresos', 0]
+];
+
+var MOV_HEADERS = ['ID', 'Fecha', 'Mes', 'Tipo', 'Grupo', 'Categoría', 'Monto', 'Descripción'];
+var REC_HEADERS = ['ID', 'Nombre', 'Día del mes', 'Monto aprox', 'Activo'];
+var META_HEADERS = ['ID', 'Nombre', 'Objetivo', 'Fecha límite', 'Ahorrado'];
+var INV_HEADERS = ['ID', 'Fecha', 'Cuenta', 'Monto', 'Nota'];
+
+// ============================== SETUP (ejecutar 1 vez) ==============================
+function setup() {
+  var props = PropertiesService.getScriptProperties();
+  var ss = null;
+  // 1) si el script vive dentro de una hoja (Extensiones → Apps Script), usa ESA hoja
+  try { ss = SpreadsheetApp.getActiveSpreadsheet(); } catch (e) { ss = null; }
+  // 2) si no, intenta con la hoja guardada de antes
+  if (!ss) {
+    var id = props.getProperty('SHEET_ID');
+    if (id) { try { ss = SpreadsheetApp.openById(id); } catch (e) { ss = null; } }
+  }
+  // 3) última opción: crear una nueva
+  if (!ss) ss = SpreadsheetApp.create('Finanzas 2026 📊');
+  props.setProperty('SHEET_ID', ss.getId());
+  if (/sin título|untitled/i.test(ss.getName())) ss.rename('Finanzas 2026 📊');
+
+  // --- Hoja Presupuesto ---
+  var shP = getOrCreate(ss, 'Presupuesto');
+  if (shP.getLastRow() < 2) {
+    shP.clear();
+    shP.getRange(1, 1, 1, 3).setValues([['Grupo', 'Categoría', 'Presupuesto mensual']])
+       .setFontWeight('bold').setBackground('#7c5cbf').setFontColor('white');
+    shP.getRange(2, 1, PRESUPUESTO_2026.length, 3).setValues(PRESUPUESTO_2026);
+    shP.setFrozenRows(1);
+    shP.autoResizeColumns(1, 3);
+  }
+  // columnas de alcancía para provisiones (fondo acumulado)
+  shP.getRange(1, 4, 1, 2).setValues([['Fondo inicial', 'Desde (yyyy-mm)']])
+     .setFontWeight('bold').setBackground('#7c5cbf').setFontColor('white');
+  shP.getRange('E:E').setNumberFormat('@');
+
+  // --- Hoja Movimientos ---
+  var shM = getOrCreate(ss, 'Movimientos');
+  if (shM.getLastRow() < 1) {
+    shM.getRange(1, 1, 1, MOV_HEADERS.length).setValues([MOV_HEADERS])
+       .setFontWeight('bold').setBackground('#7c5cbf').setFontColor('white');
+    shM.setFrozenRows(1);
+  }
+  // columna Mes como TEXTO (si no, Sheets convierte "2026-07" en fecha y daña filtros y dashboard)
+  shM.getRange('C:C').setNumberFormat('@');
+  if (shM.getLastRow() > 1) {
+    var nMov = shM.getLastRow() - 1;
+    var fechas = shM.getRange(2, 2, nMov, 1).getValues();
+    var meses = fechas.map(function (f) { return [fmtDate(f[0]).substring(0, 7)]; });
+    shM.getRange(2, 3, nMov, 1).setValues(meses);
+  }
+
+  // --- Hoja Recordatorios ---
+  var shR = getOrCreate(ss, 'Recordatorios');
+  if (shR.getLastRow() < 1) {
+    shR.getRange(1, 1, 1, REC_HEADERS.length).setValues([REC_HEADERS])
+       .setFontWeight('bold').setBackground('#7c5cbf').setFontColor('white');
+    shR.setFrozenRows(1);
+  }
+
+  // --- Hoja Dashboard (fórmulas vivas: se actualiza sola en la hoja) ---
+  buildDashboard(ss);
+
+  // --- Hojas Patrimonio, Metas e Inversiones ---
+  patrimonioSheet_();
+  metasSheet_();
+  invSheet_();
+
+  // --- Trigger diario de alertas (7am) ---
+  var exists = ScriptApp.getProjectTriggers().some(function (t) {
+    return t.getHandlerFunction() === 'dailyCheck';
+  });
+  if (!exists) {
+    ScriptApp.newTrigger('dailyCheck').timeBased().atHour(7).everyDays(1).inTimezone(TZ).create();
+  }
+
+  // --- Trigger de cierre de mes (día 1, 8am) ---
+  var existsCierre = ScriptApp.getProjectTriggers().some(function (t) {
+    return t.getHandlerFunction() === 'cierreMes';
+  });
+  if (!existsCierre) {
+    ScriptApp.newTrigger('cierreMes').timeBased().onMonthDay(1).atHour(8).inTimezone(TZ).create();
+  }
+
+  // borrar "Hoja 1" vacía si quedó
+  var default1 = ss.getSheetByName('Hoja 1') || ss.getSheetByName('Sheet1');
+  if (default1 && ss.getSheets().length > 1) ss.deleteSheet(default1);
+
+  Logger.log('✅ Listo. Hoja creada: ' + ss.getUrl());
+  return ss.getUrl();
+}
+
+function getOrCreate(ss, name) {
+  return ss.getSheetByName(name) || ss.insertSheet(name);
+}
+
+function buildDashboard(ss) {
+  var sh = getOrCreate(ss, 'Dashboard');
+  sh.clear();
+  sh.getRange('A1').setValue('DASHBOARD — mes actual').setFontWeight('bold').setFontSize(14);
+  sh.getRange('A2').setValue('Mes:');
+  sh.getRange('B2').setFormula('=TEXT(TODAY(),"YYYY-MM")');
+  var headers = [['Grupo', 'Categoría', 'Presupuesto', 'Gastado este mes', 'Restante', '% usado']];
+  sh.getRange(4, 1, 1, 6).setValues(headers).setFontWeight('bold').setBackground('#7c5cbf').setFontColor('white');
+  var shP = ss.getSheetByName('Presupuesto');
+  var n = shP && shP.getLastRow() > 1 ? shP.getLastRow() - 1 : PRESUPUESTO_2026.length;
+  sh.getRange(5, 1, n, 2).setFormulaR1C1('=Presupuesto!R[-3]C');
+  sh.getRange(5, 3, n, 1).setFormulaR1C1('=Presupuesto!R[-3]C3');
+  sh.getRange(5, 4, n, 1).setFormulaR1C1(
+    '=SUMIFS(Movimientos!C7,Movimientos!C6,RC2,Movimientos!C3,R2C2,Movimientos!C4,IF(RC1="INGRESOS","Ingreso","Gasto"))');
+  sh.getRange(5, 5, n, 1).setFormulaR1C1('=RC3-RC4');
+  sh.getRange(5, 6, n, 1).setFormulaR1C1('=IF(RC3=0,"",RC4/RC3)').setNumberFormat('0%');
+  sh.setFrozenRows(4);
+  sh.autoResizeColumns(1, 6);
+}
+
+// ============================== API WEB ==============================
+function doGet(e) {
+  return handle(e && e.parameter ? e.parameter : {});
+}
+
+function doPost(e) {
+  var body = {};
+  try { body = JSON.parse(e.postData.contents); } catch (err) {}
+  return handle(body);
+}
+
+function handle(req) {
+  var out;
+  try {
+    switch (req.action) {
+      case 'state':        out = getState(req.mes); break;
+      case 'add':          out = addMovimiento(req); break;
+      case 'add_batch':    out = addBatch(req.items); break;
+      case 'delete':       out = deleteMovimiento(req.id); break;
+      case 'chat':         out = chat(req.message, req.history, req.nombre); break;
+      case 'scan_factura': out = scanFactura(req.imagen, req.mime); break;
+      case 'set_key':      out = setKey(req.key); break;
+      case 'reminder_add': out = reminderAdd(req); break;
+      case 'reminder_del': out = reminderDel(req.id); break;
+      case 'cat_rename':   out = catRename(req.viejo, req.nuevo); break;
+      case 'cat_update':   out = catUpdate(req.categoria, req.mensual); break;
+      case 'cat_add':      out = catAdd(req.grupo, req.categoria, req.mensual); break;
+      case 'cat_delete':   out = catDelete(req.categoria); break;
+      case 'cat_reorder':  out = catReorder(req.orden); break;
+      case 'cat_fondo':    out = catFondo(req.categoria, req.fondo, req.desde); break;
+      case 'wipe_movimientos': out = wipeMovimientos(req.confirmar); break;
+      case 'set_whatsapp': out = setWhatsapp(req.phone, req.key); break;
+      case 'test_whatsapp': out = testWhatsapp(); break;
+      case 'tendencias':   out = getTendencias(); break;
+      case 'patrimonio_get':  out = patrimonioGet(); break;
+      case 'patrimonio_save': out = patrimonioSave(req.mes, req.items); break;
+      case 'meta_add':     out = metaAdd(req.nombre, req.objetivo, req.fecha); break;
+      case 'meta_del':     out = metaDel(req.id); break;
+      case 'meta_abonar':  out = metaAbonar(req.id, req.monto); break;
+      case 'inversiones_get': out = inversionesGet(); break;
+      case 'inv_add':      out = invAdd(req.cuenta, req.monto, req.fecha, req.nota); break;
+      case 'inv_del':      out = invDel(req.id); break;
+      case 'ping':         out = { ok: true, pong: true }; break;
+      case 'setup':        out = { ok: true, url: setup() }; break;
+      default:             out = { ok: false, error: 'Acción desconocida' };
+    }
+  } catch (err) {
+    out = { ok: false, error: String(err), stack: err && err.stack ? String(err.stack) : '' };
+  }
+  return ContentService.createTextOutput(JSON.stringify(out))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function ss_() {
+  // si el script vive dentro de la hoja, esa es la fuente de verdad
+  try {
+    var activa = SpreadsheetApp.getActiveSpreadsheet();
+    if (activa) return activa;
+  } catch (e) {}
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty('SHEET_ID');
+  if (id) {
+    try { return SpreadsheetApp.openById(id); } catch (e) {}
+  }
+  // auto-reparación: si no hay hoja (o no se puede abrir), la crea desde cero
+  setup();
+  return SpreadsheetApp.openById(props.getProperty('SHEET_ID'));
+}
+
+// --------- estado: presupuesto + totales del mes + movimientos recientes ---------
+function getState(mes) {
+  var ss = ss_();
+  mes = mes || Utilities.formatDate(new Date(), TZ, 'yyyy-MM');
+  var shP = ss.getSheetByName('Presupuesto');
+  var pres = (shP.getLastRow() > 1
+    ? shP.getRange(2, 1, shP.getLastRow() - 1, 5).getValues() : [])
+    .filter(function (r) { return r[1]; })
+    .map(function (r) {
+      return { grupo: r[0], categoria: r[1], mensual: Number(r[2]) || 0,
+               fondoInicial: Number(r[3]) || 0, desde: String(r[4] || '').substring(0, 7) };
+    });
+
+  var shM = ss.getSheetByName('Movimientos');
+  var rows = shM.getLastRow() > 1
+    ? shM.getRange(2, 1, shM.getLastRow() - 1, MOV_HEADERS.length).getValues() : [];
+  var movs = rows.map(function (r) {
+    var fecha = fmtDate(r[1]);
+    // el mes se deriva SIEMPRE de la fecha (Sheets convierte "2026-07" en fecha y daña los filtros)
+    return { id: r[0], fecha: fecha, mes: fecha.substring(0, 7), tipo: r[3], grupo: r[4], categoria: r[5], monto: Number(r[6]), descripcion: r[7] };
+  });
+
+  var totales = {};
+  movs.forEach(function (m) {
+    if (m.mes !== mes) return;
+    var key = m.categoria;
+    if (!totales[key]) totales[key] = 0;
+    totales[key] += m.monto;
+  });
+
+  // alcancías 🏦: fondo acumulado de cada provisión
+  // ahorrado = fondo inicial + (aporte mensual × meses desde el inicio hasta el mes consultado)
+  // gastado  = todos los gastos históricos de esa categoría → disponible = ahorrado − gastado
+  var gastadoTotal = {};
+  movs.forEach(function (m) {
+    if (m.tipo === 'Gasto' && m.mes <= mes) gastadoTotal[m.categoria] = (gastadoTotal[m.categoria] || 0) + m.monto;
+  });
+  var alcancias = {};
+  pres.forEach(function (p) {
+    if (p.grupo !== 'PROVISIONES') return;
+    var desde = /^\d{4}-\d{2}$/.test(p.desde) ? p.desde : '2026-01';
+    var n = (Number(mes.slice(0, 4)) - Number(desde.slice(0, 4))) * 12
+          + (Number(mes.slice(5, 7)) - Number(desde.slice(5, 7))) + 1;
+    if (n < 0) n = 0;
+    var ahorrado = p.fondoInicial + p.mensual * n;
+    var gastado = gastadoTotal[p.categoria] || 0;
+    alcancias[p.categoria] = {
+      ahorrado: ahorrado, gastado: gastado, disponible: ahorrado - gastado,
+      mensual: p.mensual, desde: desde, meses: n
+    };
+  });
+
+  // deudas por persona (sobre TODO el historial, no solo el mes)
+  var deudas = {};
+  movs.forEach(function (m) {
+    if (m.grupo !== 'POR COBRAR') return;
+    var p = m.categoria || 'Alguien';
+    if (!deudas[p]) deudas[p] = { debe: 0, abonado: 0, saldo: 0 };
+    if (m.tipo === 'Por cobrar') deudas[p].debe += m.monto;
+    if (m.tipo === 'Abono') deudas[p].abonado += m.monto;
+  });
+  for (var p in deudas) deudas[p].saldo = deudas[p].debe - deudas[p].abonado;
+
+  // custodias 👝: plata de OTROS que la usuaria guarda en sus cuentas
+  var custodias = {};
+  movs.forEach(function (m) {
+    if (m.grupo !== 'PLATA AJENA') return;
+    var p = m.categoria || 'Alguien';
+    if (!custodias[p]) custodias[p] = { recibido: 0, entregado: 0, saldo: 0 };
+    if (m.tipo === 'Guardo') custodias[p].recibido += m.monto;
+    if (m.tipo === 'Entrego') custodias[p].entregado += m.monto;
+  });
+  for (var q in custodias) custodias[q].saldo = custodias[q].recibido - custodias[q].entregado;
+
+  var shR = ss.getSheetByName('Recordatorios');
+  var recs = shR.getLastRow() > 1
+    ? shR.getRange(2, 1, shR.getLastRow() - 1, REC_HEADERS.length).getValues().map(function (r) {
+        return { id: r[0], nombre: r[1], dia: Number(r[2]), monto: Number(r[3]) || 0, activo: r[4] !== false };
+      })
+    : [];
+
+  return {
+    ok: true, mes: mes, presupuesto: pres, totales: totales,
+    movimientos: movs.slice(-150).reverse(),
+    movsMes: movs.filter(function (m) { return m.mes === mes; }).reverse(),
+    recordatorios: recs,
+    deudas: deudas,
+    custodias: custodias,
+    alcancias: alcancias,
+    metas: metasGet_(),
+    aliases: JSON.parse(PropertiesService.getScriptProperties().getProperty('RENAMES') || '{}'),
+    sheetUrl: ss.getUrl()
+  };
+}
+
+// --------- categorías editables ---------
+function catRename(viejo, nuevo) {
+  viejo = String(viejo || '').trim(); nuevo = String(nuevo || '').trim();
+  if (!viejo || !nuevo || viejo === nuevo) return { ok: false, error: 'Nombre inválido' };
+  var ss = ss_();
+  var shP = ss.getSheetByName('Presupuesto');
+  var cats = shP.getRange(2, 2, Math.max(shP.getLastRow() - 1, 1), 1).getValues();
+  var found = false;
+  for (var i = 0; i < cats.length; i++) {
+    if (cats[i][0] === nuevo) return { ok: false, error: 'Ya existe una categoría llamada "' + nuevo + '"' };
+    if (cats[i][0] === viejo) { shP.getRange(i + 2, 2).setValue(nuevo); found = true; }
+  }
+  if (!found) return { ok: false, error: 'No encontré la categoría "' + viejo + '"' };
+
+  // actualizar todos los movimientos históricos
+  var shM = ss.getSheetByName('Movimientos');
+  var n = shM.getLastRow() - 1;
+  var actualizados = 0;
+  if (n > 0) {
+    var rng = shM.getRange(2, 6, n, 1);
+    var vals = rng.getValues();
+    for (var j = 0; j < vals.length; j++) {
+      if (vals[j][0] === viejo) { vals[j][0] = nuevo; actualizados++; }
+    }
+    if (actualizados) rng.setValues(vals);
+  }
+
+  // recordar el cambio para que la clasificación automática siga funcionando
+  var props = PropertiesService.getScriptProperties();
+  var renames = JSON.parse(props.getProperty('RENAMES') || '{}');
+  var canonico = viejo;
+  for (var k in renames) if (renames[k] === viejo) { canonico = k; break; }
+  renames[canonico] = nuevo;
+  props.setProperty('RENAMES', JSON.stringify(renames));
+  return { ok: true, movimientosActualizados: actualizados };
+}
+
+function catUpdate(categoria, mensual) {
+  var shP = ss_().getSheetByName('Presupuesto');
+  var cats = shP.getRange(2, 2, Math.max(shP.getLastRow() - 1, 1), 1).getValues();
+  for (var i = 0; i < cats.length; i++) {
+    if (cats[i][0] === categoria) {
+      shP.getRange(i + 2, 3).setValue(Number(mensual) || 0);
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'No encontré la categoría' };
+}
+
+function catAdd(grupo, categoria, mensual) {
+  categoria = String(categoria || '').trim();
+  if (!categoria) return { ok: false, error: 'Nombre vacío' };
+  var ss = ss_();
+  var shP = ss.getSheetByName('Presupuesto');
+  var cats = shP.getRange(2, 2, Math.max(shP.getLastRow() - 1, 1), 1).getValues();
+  for (var i = 0; i < cats.length; i++) {
+    if (cats[i][0] === categoria) return { ok: false, error: 'Ya existe esa categoría' };
+  }
+  shP.appendRow([grupo || 'GUSTOS', categoria, Number(mensual) || 0]);
+  buildDashboard(ss); // reconstruir para incluir la nueva fila
+  return { ok: true };
+}
+
+function fmtDate(d) {
+  if (d instanceof Date) return Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+  return String(d);
+}
+
+// --------- agregar movimiento ---------
+function addMovimiento(req) {
+  var ss = ss_();
+  var sh = ss.getSheetByName('Movimientos');
+  var id = 'm' + new Date().getTime() + Math.floor(Math.random() * 1000);
+  var fecha = req.fecha || Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  var mes = fecha.substring(0, 7);
+  sh.appendRow([id, fecha, mes, req.tipo || 'Gasto', req.grupo || '', req.categoria || 'Otros',
+                Number(req.monto) || 0, req.descripcion || '']);
+  // alerta inmediata: presupuesto del mes para gastos normales, alcancía para provisiones
+  var alerta = null;
+  if ((req.tipo || 'Gasto') === 'Gasto') {
+    var st = getState(mes);
+    var p = st.presupuesto.filter(function (x) { return x.categoria === req.categoria; })[0];
+    if (p && p.grupo === 'PROVISIONES') {
+      var a = st.alcancias[req.categoria];
+      if (a) {
+        alerta = a.disponible < 0
+          ? '🚨 Tu alcancía de ' + req.categoria.replace('Provisión ', '') + ' quedó en NEGATIVO: gastaste ' + fmtCOP(a.gastado) + ' y solo has ahorrado ' + fmtCOP(a.ahorrado)
+          : '🏦 Salió de tu alcancía de ' + req.categoria.replace('Provisión ', '') + ': te quedan ' + fmtCOP(a.disponible);
+      }
+    } else if (p && p.mensual > 0) {
+      var usado = st.totales[req.categoria] || 0;
+      var pct = usado / p.mensual;
+      if (pct >= 1) alerta = '🚨 Te pasaste del presupuesto de ' + req.categoria + ': llevas ' + fmtCOP(usado) + ' de ' + fmtCOP(p.mensual);
+      else if (pct >= 0.8) alerta = '⚠️ Vas en ' + Math.round(pct * 100) + '% del presupuesto de ' + req.categoria + ' (' + fmtCOP(usado) + ' de ' + fmtCOP(p.mensual) + ')';
+    }
+  }
+  return { ok: true, id: id, alerta: alerta };
+}
+
+function addBatch(items) {
+  var ss = ss_();
+  var sh = ss.getSheetByName('Movimientos');
+  var existing = {};
+  if (sh.getLastRow() > 1) {
+    sh.getRange(2, 2, sh.getLastRow() - 1, 6).getValues().forEach(function (r) {
+      existing[fmtDate(r[0]) + '|' + r[5] + '|' + r[6]] = true; // fecha|monto|desc aprox
+    });
+  }
+  var added = 0;
+  var rows = [];
+  (items || []).forEach(function (it) {
+    var key = it.fecha + '|' + it.monto + '|' + it.descripcion;
+    if (existing[key]) return;
+    rows.push(['m' + new Date().getTime() + '_' + added, it.fecha, it.fecha.substring(0, 7),
+               it.tipo, it.grupo, it.categoria, Number(it.monto), it.descripcion]);
+    added++;
+  });
+  if (rows.length) sh.getRange(sh.getLastRow() + 1, 1, rows.length, MOV_HEADERS.length).setValues(rows);
+  return { ok: true, agregados: added, omitidos: (items || []).length - added };
+}
+
+function deleteMovimiento(id) {
+  var sh = ss_().getSheetByName('Movimientos');
+  var ids = sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (ids[i][0] === id) { sh.deleteRow(i + 2); return { ok: true }; }
+  }
+  return { ok: false, error: 'No encontrado' };
+}
+
+// --------- recordatorios ---------
+function reminderAdd(req) {
+  var sh = ss_().getSheetByName('Recordatorios');
+  var id = 'r' + new Date().getTime();
+  sh.appendRow([id, req.nombre, Number(req.dia), Number(req.monto) || 0, true]);
+  return { ok: true, id: id };
+}
+
+function reminderDel(id) {
+  var sh = ss_().getSheetByName('Recordatorios');
+  var ids = sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (ids[i][0] === id) { sh.deleteRow(i + 2); return { ok: true }; }
+  }
+  return { ok: false, error: 'No encontrado' };
+}
+
+function catDelete(categoria) {
+  categoria = String(categoria || '').trim();
+  if (!categoria) return { ok: false, error: 'Nombre vacío' };
+  if (categoria === 'Otros' || categoria === 'Otros Ingresos') {
+    return { ok: false, error: '"' + categoria + '" es la categoría de respaldo: ahí van los movimientos de las categorías que borres.' };
+  }
+  var ss = ss_();
+  var shP = ss.getSheetByName('Presupuesto');
+  var data = shP.getRange(2, 1, Math.max(shP.getLastRow() - 1, 1), 2).getValues();
+  var fila = -1, grupo = '';
+  for (var i = 0; i < data.length; i++) {
+    if (data[i][1] === categoria) { fila = i + 2; grupo = data[i][0]; break; }
+  }
+  if (fila < 0) return { ok: false, error: 'No encontré la categoría' };
+  shP.deleteRow(fila);
+
+  // los movimientos históricos pasan a la categoría de respaldo
+  var destino = grupo === 'INGRESOS' ? 'Otros Ingresos' : 'Otros';
+  var destinoGrupo = grupo === 'INGRESOS' ? 'INGRESOS' : 'GUSTOS';
+  var shM = ss.getSheetByName('Movimientos');
+  var n = shM.getLastRow() - 1, reasignados = 0;
+  if (n > 0) {
+    var rng = shM.getRange(2, 5, n, 2); // columnas Grupo y Categoría
+    var vals = rng.getValues();
+    for (var j = 0; j < vals.length; j++) {
+      if (vals[j][1] === categoria) { vals[j][0] = destinoGrupo; vals[j][1] = destino; reasignados++; }
+    }
+    if (reasignados) rng.setValues(vals);
+  }
+
+  // limpiar renombres que apunten a ella
+  var props = PropertiesService.getScriptProperties();
+  var renames = JSON.parse(props.getProperty('RENAMES') || '{}');
+  for (var k in renames) if (renames[k] === categoria || k === categoria) delete renames[k];
+  props.setProperty('RENAMES', JSON.stringify(renames));
+
+  buildDashboard(ss);
+  return { ok: true, reasignados: reasignados, destino: destino };
+}
+
+function catFondo(categoria, fondo, desde) {
+  var shP = ss_().getSheetByName('Presupuesto');
+  var cats = shP.getRange(2, 2, Math.max(shP.getLastRow() - 1, 1), 1).getValues();
+  for (var i = 0; i < cats.length; i++) {
+    if (cats[i][0] === categoria) {
+      shP.getRange(i + 2, 4).setValue(Number(fondo) || 0);
+      shP.getRange(i + 2, 5).setValue(/^\d{4}-\d{2}$/.test(String(desde)) ? String(desde) : '2026-01');
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: 'No encontré la categoría' };
+}
+
+function catReorder(orden) {
+  if (typeof orden === 'string') { try { orden = JSON.parse(orden); } catch (e) { orden = null; } }
+  if (!Array.isArray(orden) || !orden.length) return { ok: false, error: 'Orden inválido' };
+  var shP = ss_().getSheetByName('Presupuesto');
+  var n = shP.getLastRow() - 1;
+  if (n < 1) return { ok: false, error: 'Sin categorías' };
+  var data = shP.getRange(2, 1, n, 5).getValues(); // incluye columnas de alcancía
+  var map = {};
+  data.forEach(function (r) { map[r[1]] = r; });
+  var nuevas = [];
+  orden.forEach(function (c) { if (map[c]) { nuevas.push(map[c]); delete map[c]; } });
+  for (var k in map) nuevas.push(map[k]); // las que no vinieron en la lista, al final
+  shP.getRange(2, 1, n, 5).setValues(nuevas);
+  return { ok: true };
+}
+
+// --------- borrar todos los movimientos (empezar de cero) ---------
+function wipeMovimientos(confirmar) {
+  if (confirmar !== 'BORRAR TODO') return { ok: false, error: 'Falta la confirmación exacta' };
+  var sh = ss_().getSheetByName('Movimientos');
+  var n = sh.getLastRow() - 1;
+  if (n > 0) sh.deleteRows(2, n);
+  return { ok: true, borrados: Math.max(n, 0) };
+}
+
+// ============================== METAS DE AHORRO 🎯 ==============================
+function metasSheet_() {
+  var ss = ss_();
+  var sh = ss.getSheetByName('Metas');
+  if (!sh) {
+    sh = ss.insertSheet('Metas');
+    sh.getRange(1, 1, 1, META_HEADERS.length).setValues([META_HEADERS])
+      .setFontWeight('bold').setBackground('#7c5cbf').setFontColor('white');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function metasGet_() {
+  var ss = ss_();
+  var sh = ss.getSheetByName('Metas');
+  if (!sh || sh.getLastRow() < 2) return [];
+  return sh.getRange(2, 1, sh.getLastRow() - 1, META_HEADERS.length).getValues().map(function (r) {
+    return { id: r[0], nombre: r[1], objetivo: Number(r[2]) || 0, fecha: fmtDate(r[3]), ahorrado: Number(r[4]) || 0 };
+  });
+}
+
+function metaAdd(nombre, objetivo, fecha) {
+  nombre = String(nombre || '').trim();
+  if (!nombre || !Number(objetivo)) return { ok: false, error: 'Falta nombre u objetivo' };
+  metasSheet_().appendRow(['g' + new Date().getTime(), nombre, Number(objetivo), fecha || '', 0]);
+  return { ok: true };
+}
+
+function metaDel(id) {
+  var sh = metasSheet_();
+  var ids = sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (ids[i][0] === id) { sh.deleteRow(i + 2); return { ok: true }; }
+  }
+  return { ok: false, error: 'No encontrada' };
+}
+
+function metaAbonar(id, monto) {
+  var sh = metasSheet_();
+  var data = sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), META_HEADERS.length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (data[i][0] === id) {
+      var nuevo = (Number(data[i][4]) || 0) + (Number(monto) || 0);
+      sh.getRange(i + 2, 5).setValue(Math.max(nuevo, 0));
+      return { ok: true, ahorrado: Math.max(nuevo, 0) };
+    }
+  }
+  return { ok: false, error: 'No encontrada' };
+}
+
+// ============================== INVERSIONES 🪙 ==============================
+function invSheet_() {
+  var ss = ss_();
+  var sh = ss.getSheetByName('Inversiones');
+  if (!sh) {
+    sh = ss.insertSheet('Inversiones');
+    sh.getRange(1, 1, 1, INV_HEADERS.length).setValues([INV_HEADERS])
+      .setFontWeight('bold').setBackground('#7c5cbf').setFontColor('white');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function invAdd(cuenta, monto, fecha, nota) {
+  cuenta = String(cuenta || '').trim();
+  if (!cuenta || !Number(monto)) return { ok: false, error: 'Falta cuenta o monto' };
+  invSheet_().appendRow(['i' + new Date().getTime(), fecha || Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'),
+                         cuenta, Number(monto), String(nota || '')]);
+  return { ok: true };
+}
+
+function invDel(id) {
+  var sh = invSheet_();
+  var ids = sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (ids[i][0] === id) { sh.deleteRow(i + 2); return { ok: true }; }
+  }
+  return { ok: false, error: 'No encontrado' };
+}
+
+function inversionesGet() {
+  var ss = ss_();
+  var sh = ss.getSheetByName('Inversiones');
+  var rows = (sh && sh.getLastRow() > 1)
+    ? sh.getRange(2, 1, sh.getLastRow() - 1, INV_HEADERS.length).getValues() : [];
+  var cuentas = {};
+  var aportes = [];
+  rows.forEach(function (r) {
+    var c = r[2];
+    if (!cuentas[c]) cuentas[c] = { cuenta: c, aportado: 0, movimientos: 0 };
+    cuentas[c].aportado += Number(r[3]) || 0;
+    cuentas[c].movimientos++;
+    aportes.push({ id: r[0], fecha: fmtDate(r[1]), cuenta: c, monto: Number(r[3]) || 0, nota: r[4] });
+  });
+  // valor actual: del último snapshot de Patrimonio cuyo ítem se llame igual
+  var patri = patrimonioGet().meses;
+  var valores = {};
+  var mesValor = '';
+  if (patri.length) {
+    var ult = patri[patri.length - 1];
+    mesValor = ult.mes;
+    ult.items.forEach(function (it) { valores[it.item] = it.valor; });
+  }
+  var lista = Object.keys(cuentas).map(function (c) {
+    var valorActual = valores.hasOwnProperty(c) ? valores[c] : null;
+    var ganancia = valorActual !== null ? valorActual - cuentas[c].aportado : null;
+    return {
+      cuenta: c, aportado: cuentas[c].aportado, valorActual: valorActual,
+      ganancia: ganancia,
+      rendimiento: (ganancia !== null && cuentas[c].aportado > 0) ? Math.round(ganancia / cuentas[c].aportado * 1000) / 10 : null
+    };
+  });
+  return { ok: true, cuentas: lista, aportes: aportes.slice(-30).reverse(), mesValor: mesValor, itemsPatrimonio: Object.keys(valores) };
+}
+
+// ============================== TENDENCIAS Y METAS ==============================
+function getTendencias() {
+  var sh = ss_().getSheetByName('Movimientos');
+  var rows = sh.getLastRow() > 1
+    ? sh.getRange(2, 1, sh.getLastRow() - 1, MOV_HEADERS.length).getValues() : [];
+  var porMes = {};   // mes -> {ingresos, gastos}
+  var porCat = {};   // categoria -> {total, meses:{}}  (solo gastos)
+  var anio = Utilities.formatDate(new Date(), TZ, 'yyyy');
+  var ytd = {};      // acumulado del año por categoría de PROVISIONES
+
+  rows.forEach(function (r) {
+    var mes = fmtDate(r[1]).substring(0, 7);
+    var tipo = r[3], grupo = r[4], cat = r[5], monto = Number(r[6]) || 0;
+    if (!porMes[mes]) porMes[mes] = { ingresos: 0, gastos: 0 };
+    if (tipo === 'Ingreso') porMes[mes].ingresos += monto;
+    if (tipo === 'Gasto') {
+      porMes[mes].gastos += monto;
+      if (!porCat[cat]) porCat[cat] = { total: 0, meses: {} };
+      porCat[cat].total += monto;
+      porCat[cat].meses[mes] = true;
+      if (grupo === 'PROVISIONES' && mes.indexOf(anio) === 0) ytd[cat] = (ytd[cat] || 0) + monto;
+    }
+  });
+
+  var meses = Object.keys(porMes).sort().map(function (m) {
+    return { mes: m, ingresos: porMes[m].ingresos, gastos: porMes[m].gastos };
+  });
+  var topCategorias = Object.keys(porCat).map(function (c) {
+    var nMeses = Object.keys(porCat[c].meses).length || 1;
+    return { categoria: c, total: porCat[c].total, promedio: Math.round(porCat[c].total / nMeses) };
+  }).sort(function (a, b) { return b.total - a.total; }).slice(0, 8);
+
+  return { ok: true, meses: meses.slice(-12), topCategorias: topCategorias, ytd: ytd, anio: Number(anio) };
+}
+
+// ============================== PATRIMONIO ==============================
+function patrimonioSheet_() {
+  var ss = ss_();
+  var sh = ss.getSheetByName('Patrimonio');
+  if (!sh) {
+    sh = ss.insertSheet('Patrimonio');
+    sh.getRange(1, 1, 1, 3).setValues([['Mes', 'Ítem', 'Valor']])
+      .setFontWeight('bold').setBackground('#7c5cbf').setFontColor('white');
+    sh.getRange('A:A').setNumberFormat('@');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function patrimonioGet() {
+  var sh = patrimonioSheet_();
+  var rows = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues() : [];
+  var porMes = {};
+  rows.forEach(function (r) {
+    var mes = String(r[0]).substring(0, 7);
+    if (!porMes[mes]) porMes[mes] = [];
+    porMes[mes].push({ item: r[1], valor: Number(r[2]) || 0 });
+  });
+  var meses = Object.keys(porMes).sort().map(function (m) {
+    var total = porMes[m].reduce(function (s, x) { return s + x.valor; }, 0);
+    return { mes: m, items: porMes[m], total: total };
+  });
+  return { ok: true, meses: meses };
+}
+
+function patrimonioSave(mes, items) {
+  if (!mes || !/^\d{4}-\d{2}$/.test(mes)) return { ok: false, error: 'Mes inválido' };
+  if (typeof items === 'string') { try { items = JSON.parse(items); } catch (e) { items = null; } }
+  if (!Array.isArray(items) || !items.length) return { ok: false, error: 'Sin ítems' };
+  var sh = patrimonioSheet_();
+  // borrar el snapshot previo de ese mes (de abajo hacia arriba)
+  if (sh.getLastRow() > 1) {
+    var vals = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
+    for (var i = vals.length - 1; i >= 0; i--) {
+      if (String(vals[i][0]).substring(0, 7) === mes) sh.deleteRow(i + 2);
+    }
+  }
+  var total = 0;
+  var rows = items.filter(function (x) { return x.item && String(x.item).trim(); }).map(function (x) {
+    var v = Number(x.valor) || 0;
+    total += v;
+    return [mes, String(x.item).trim(), v];
+  });
+  if (rows.length) sh.getRange(sh.getLastRow() + 1, 1, rows.length, 3).setValues(rows);
+  return { ok: true, total: total, items: rows.length };
+}
+
+// ============================== CIERRE DE MES (automático, día 1) ==============================
+function cierreMes() {
+  var hoy = new Date();
+  var prev = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 15);
+  var mes = Utilities.formatDate(prev, TZ, 'yyyy-MM');
+  var nombreMes = Utilities.formatDate(prev, TZ, 'MMMM yyyy');
+  var st = getState(mes);
+
+  var ing = 0, gas = 0;
+  var gastos = [];
+  st.movsMes.forEach(function (m) {
+    if (m.tipo === 'Ingreso') ing += m.monto;
+    if (m.tipo === 'Gasto') { gas += m.monto; gastos.push(m); }
+  });
+  var presTotal = st.presupuesto.filter(function (p) { return p.grupo !== 'INGRESOS'; })
+    .reduce(function (s, p) { return s + p.mensual; }, 0);
+  var pasadas = st.presupuesto.filter(function (p) {
+    return p.grupo !== 'INGRESOS' && p.grupo !== 'PROVISIONES' && p.mensual > 0 && (st.totales[p.categoria] || 0) > p.mensual;
+  }).map(function (p) { return p.categoria; });
+  for (var cat in st.alcancias) {
+    if (st.alcancias[cat].disponible < 0) pasadas.push(cat + ' (alcancía en negativo)');
+  }
+  gastos.sort(function (a, b) { return b.monto - a.monto; });
+
+  var lineas = [
+    '💜 *Cierre de ' + nombreMes + '*', '',
+    '💰 Ingresos: ' + fmtCOP(ing),
+    '💸 Gastos: ' + fmtCOP(gas) + ' (presupuesto: ' + fmtCOP(presTotal) + ')',
+    '✨ Balance: ' + fmtCOP(ing - gas),
+    ing > 0 ? '📊 Tasa de ahorro: ' + Math.round(((ing - gas) / ing) * 100) + '%' : '',
+    ''
+  ];
+  if (pasadas.length) lineas.push('🚨 Te pasaste en: ' + pasadas.join(', '), '');
+  else lineas.push('✅ ¡Ninguna categoría se pasó del presupuesto!', '');
+  lineas.push('🔝 Tus 5 gastos más grandes:');
+  gastos.slice(0, 5).forEach(function (g, i) {
+    lineas.push((i + 1) + '. ' + fmtCOP(g.monto) + ' — ' + (g.descripcion || g.categoria));
+  });
+  var texto = lineas.filter(function (l) { return l !== null && l !== undefined; }).join('\n');
+
+  if (!enviarWhatsApp(texto)) {
+    MailApp.sendEmail({
+      to: Session.getEffectiveUser().getEmail(),
+      subject: '💜 Cierre de mes: ' + nombreMes,
+      htmlBody: '<pre style="font-family:sans-serif;white-space:pre-wrap">' + texto.replace(/\*/g, '') + '</pre>'
+    });
+  }
+}
+
+// ============================== WHATSAPP (CallMeBot, gratis) ==============================
+function setWhatsapp(phone, key) {
+  var props = PropertiesService.getScriptProperties();
+  if (!phone || !key) {
+    props.deleteProperty('WA_PHONE'); props.deleteProperty('WA_KEY');
+    return { ok: true, desactivado: true };
+  }
+  props.setProperty('WA_PHONE', String(phone).replace(/[^\d+]/g, ''));
+  props.setProperty('WA_KEY', String(key).trim());
+  return { ok: true };
+}
+
+function enviarWhatsApp(texto) {
+  var props = PropertiesService.getScriptProperties();
+  var phone = props.getProperty('WA_PHONE'), key = props.getProperty('WA_KEY');
+  if (!phone || !key) return false;
+  try {
+    var r = UrlFetchApp.fetch('https://api.callmebot.com/whatsapp.php?phone=' + encodeURIComponent(phone) +
+      '&apikey=' + encodeURIComponent(key) + '&text=' + encodeURIComponent(texto),
+      { muteHttpExceptions: true });
+    return r.getResponseCode() === 200;
+  } catch (e) { return false; }
+}
+
+function testWhatsapp() {
+  var enviado = enviarWhatsApp('💜 ¡Hola! Prueba exitosa: tus alertas y recordatorios de pagos llegarán por aquí.');
+  return enviado ? { ok: true } : { ok: false, error: 'No se pudo enviar. Revisa el número y la apikey.' };
+}
+
+// ============================== CHAT ASESOR (Gemini gratis) ==============================
+function setKey(key) {
+  if (!key || key.length < 20) return { ok: false, error: 'Key inválida' };
+  PropertiesService.getScriptProperties().setProperty('GEMINI_KEY', key.trim());
+  return { ok: true };
+}
+
+function chat(message, history, nombre) {
+  var etapa = 'inicio';
+  nombre = String(nombre || '').trim().slice(0, 30);
+  try {
+    var key = String(PropertiesService.getScriptProperties().getProperty('GEMINI_KEY') || '').trim();
+    if (!key) return { ok: false, error: 'NO_KEY' };
+
+    etapa = 'leyendo tus datos';
+    var st = getState();
+    etapa = 'armando contexto';
+    var contexto = buildContext(st);
+    etapa = 'armando conversación';
+    var contents = [];
+    if (typeof history === 'string') { try { history = JSON.parse(history); } catch (e) { history = []; } }
+    (Array.isArray(history) ? history : []).slice(-10).forEach(function (h) {
+      if (h && h.text) contents.push({ role: h.role === 'user' ? 'user' : 'model', parts: [{ text: String(h.text) }] });
+    });
+    contents.push({ role: 'user', parts: [{ text: String(message || 'Hola') }] });
+
+    var payload = {
+      system_instruction: { parts: [{ text:
+        'Eres la asesora financiera personal de ' + (nombre || 'tu usuaria') + ' (Colombia; moneda COP). ' +
+        'Tienes acceso a sus datos financieros reales de abajo. Responde en español, cálida pero directa, ' +
+        'con números concretos y consejos accionables para optimizar sus finanzas. Sé breve (máx ~150 palabras salvo que pidan detalle). ' +
+        'Puedes analizar sus inversiones, patrimonio y metas con pedagogía (explica lo técnico en palabras simples). Si te pide recomendaciones de inversión específicas, ' +
+        'ayúdale a pensar con sus datos, pero aclárale con cariño que eres una herramienta informativa, no una asesora certificada.\n\n' +
+        'DATOS ACTUALES:\n' + contexto } ] },
+      contents: contents,
+      // thinkingBudget 0: sin "razonamiento interno" que consume los tokens y corta la respuesta
+      generationConfig: { temperature: 0.4, maxOutputTokens: 2048, thinkingConfig: { thinkingBudget: 0 } }
+    };
+
+    etapa = 'llamando a Gemini';
+    var resp = UrlFetchApp.fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + encodeURIComponent(key),
+      { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
+    etapa = 'leyendo respuesta';
+    var code = resp.getResponseCode();
+    var data = JSON.parse(resp.getContentText());
+    if (code !== 200) return { ok: false, error: (data.error && data.error.message) || ('HTTP ' + code) };
+    var text = '';
+    try { text = data.candidates[0].content.parts.map(function (p) { return p.text; }).join(''); }
+    catch (e) { return { ok: false, error: 'Respuesta vacía de Gemini' }; }
+    return { ok: true, reply: text };
+  } catch (err) {
+    return { ok: false, error: 'Error en etapa [' + etapa + ']: ' + String(err),
+             stack: err && err.stack ? String(err.stack) : '' };
+  }
+}
+
+function buildContext(st) {
+  var lines = ['Mes actual: ' + st.mes];
+  var totalGasto = 0, totalIng = 0;
+  lines.push('\nPRESUPUESTO vs GASTADO (mes actual):');
+  st.presupuesto.forEach(function (p) {
+    if (p.grupo === 'INGRESOS') return;
+    var usado = st.totales[p.categoria] || 0;
+    totalGasto += usado;
+    if (p.mensual > 0 || usado > 0) {
+      lines.push('- ' + p.categoria + ' [' + p.grupo + ']: presupuesto ' + p.mensual + ', gastado ' + usado);
+    }
+  });
+  var hayAlc = Object.keys(st.alcancias || {}).length;
+  if (hayAlc) {
+    lines.push('\nALCANCÍAS (fondos de las provisiones — el presupuesto mensual es AHORRO, los gastos salen del fondo acumulado; solo es problema si el disponible es negativo):');
+    for (var cat in st.alcancias) {
+      var a = st.alcancias[cat];
+      lines.push('- ' + cat + ': ahorrado total ' + a.ahorrado + ', gastado total ' + a.gastado + ', DISPONIBLE ' + a.disponible);
+    }
+  }
+  st.movimientos.forEach(function (m) { if (m.tipo === 'Ingreso' && m.mes === st.mes) totalIng += m.monto; });
+  lines.push('\nTotal gastado mes: ' + totalGasto + ' | Total ingresos mes: ' + totalIng);
+  lines.push('\nÚLTIMOS MOVIMIENTOS:');
+  st.movimientos.slice(0, 40).forEach(function (m) {
+    lines.push(m.fecha + ' | ' + m.tipo + ' | ' + m.categoria + ' | ' + m.monto + ' | ' + m.descripcion);
+  });
+  if (st.recordatorios.length) {
+    lines.push('\nRECORDATORIOS DE PAGO (día del mes):');
+    st.recordatorios.forEach(function (r) { lines.push('- ' + r.nombre + ': día ' + r.dia + ', aprox ' + r.monto); });
+  }
+  var pers = Object.keys(st.custodias || {});
+  if (pers.length) {
+    lines.push('\nPLATA AJENA QUE GUARDA EN SUS CUENTAS (custodia — no es de ella):');
+    pers.forEach(function (p) {
+      var c = st.custodias[p];
+      lines.push('- ' + p + ': recibido ' + c.recibido + ', entregado/gastado ' + c.entregado + ', SALDO A SU FAVOR ' + c.saldo);
+    });
+  }
+  if (st.metas && st.metas.length) {
+    lines.push('\nMETAS DE AHORRO:');
+    st.metas.forEach(function (m) {
+      lines.push('- ' + m.nombre + ': ahorrado ' + m.ahorrado + ' de ' + m.objetivo + (m.fecha ? ' (fecha límite ' + m.fecha + ')' : ''));
+    });
+  }
+  try {
+    var inv = inversionesGet();
+    if (inv.cuentas.length) {
+      lines.push('\nINVERSIONES (aportado vs valor actual del último registro de patrimonio):');
+      inv.cuentas.forEach(function (c) {
+        lines.push('- ' + c.cuenta + ': aportado ' + c.aportado
+          + (c.valorActual !== null ? ', valor actual ' + c.valorActual + ', ganancia ' + c.ganancia + ' (' + c.rendimiento + '%)' : ', valor actual sin registrar'));
+      });
+    }
+  } catch (e) {}
+  var patri = patrimonioGet().meses;
+  if (patri.length) {
+    lines.push('\nPATRIMONIO (total por mes):');
+    patri.slice(-6).forEach(function (m) { lines.push('- ' + m.mes + ': ' + m.total); });
+  }
+  return lines.join('\n');
+}
+
+// ============================== ESCANEAR FACTURA 📷 (Gemini Vision) ==============================
+function scanFactura(imagenB64, mime) {
+  var key = String(PropertiesService.getScriptProperties().getProperty('GEMINI_KEY') || '').trim();
+  if (!key) return { ok: false, error: 'NO_KEY' };
+  if (!imagenB64) return { ok: false, error: 'Sin imagen' };
+
+  var payload = {
+    contents: [{
+      role: 'user',
+      parts: [
+        { inline_data: { mime_type: mime || 'image/jpeg', data: imagenB64 } },
+        { text: 'Esta es una foto de una factura o recibo de compra en Colombia (pesos COP). ' +
+                'Extrae CADA artículo con su valor total (si hay cantidad x precio, usa el total de la línea). ' +
+                'Incluye propina/domicilio/impuestos como artículos aparte solo si aparecen como líneas. ' +
+                'Ignora subtotales. Si un valor tiene decimales, redondéalo a pesos. ' +
+                'Responde SOLO este JSON: {"comercio":"nombre del lugar o \'\'","items":[{"descripcion":"...","valor":12345}],"total":123456}' }
+      ]
+    }],
+    generationConfig: {
+      temperature: 0, maxOutputTokens: 4096,
+      response_mime_type: 'application/json',
+      thinkingConfig: { thinkingBudget: 0 }
+    }
+  };
+  var resp = UrlFetchApp.fetch(
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + encodeURIComponent(key),
+    { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
+  var code = resp.getResponseCode();
+  var data = JSON.parse(resp.getContentText());
+  if (code !== 200) return { ok: false, error: (data.error && data.error.message) || ('HTTP ' + code) };
+  try {
+    var texto = data.candidates[0].content.parts.map(function (p) { return p.text; }).join('');
+    var json = JSON.parse(texto.replace(/^```json?|```$/g, '').trim());
+    var items = (json.items || []).filter(function (it) { return it.descripcion && Number(it.valor) > 0; })
+      .map(function (it) { return { descripcion: String(it.descripcion).slice(0, 60), valor: Math.round(Number(it.valor)) }; });
+    if (!items.length) return { ok: false, error: 'No pude leer artículos en la foto. Intenta con más luz o más cerca.' };
+    return { ok: true, comercio: json.comercio || '', items: items, total: Math.round(Number(json.total) || 0) };
+  } catch (e) {
+    return { ok: false, error: 'No entendí la factura. Intenta con una foto más clara.' };
+  }
+}
+
+// ============================== ALERTAS DIARIAS ==============================
+function dailyCheck() {
+  var st = getState();
+  var email = Session.getEffectiveUser().getEmail();
+  var hoy = Number(Utilities.formatDate(new Date(), TZ, 'd'));
+  var avisos = [];
+
+  st.presupuesto.forEach(function (p) {
+    if (p.grupo === 'INGRESOS' || p.grupo === 'PROVISIONES' || p.mensual <= 0) return;
+    var usado = st.totales[p.categoria] || 0;
+    var pct = usado / p.mensual;
+    if (pct >= 1) avisos.push('🚨 ' + p.categoria + ': te pasaste (' + fmtCOP(usado) + ' de ' + fmtCOP(p.mensual) + ')');
+    else if (pct >= 0.8) avisos.push('⚠️ ' + p.categoria + ': vas en ' + Math.round(pct * 100) + '% (' + fmtCOP(usado) + ' de ' + fmtCOP(p.mensual) + ')');
+  });
+
+  // provisiones: solo alertar si la ALCANCÍA (fondo acumulado) queda en negativo
+  for (var cat in st.alcancias) {
+    var a = st.alcancias[cat];
+    if (a.disponible < 0) {
+      avisos.push('🚨 Alcancía de ' + cat.replace('Provisión ', '') + ' en negativo: gastado ' + fmtCOP(a.gastado) + ' vs ahorrado ' + fmtCOP(a.ahorrado));
+    }
+  }
+
+  st.recordatorios.forEach(function (r) {
+    if (!r.activo) return;
+    var diff = r.dia - hoy;
+    if (diff === 0) avisos.push('📅 HOY: pagar "' + r.nombre + '"' + (r.monto ? ' (~' + fmtCOP(r.monto) + ')' : ''));
+    else if (diff === 2) avisos.push('📅 En 2 días: pagar "' + r.nombre + '"' + (r.monto ? ' (~' + fmtCOP(r.monto) + ')' : ''));
+  });
+
+  // metas de ahorro: recordatorio los días 1 y 15
+  if (hoy === 1 || hoy === 15) {
+    (st.metas || []).forEach(function (m) {
+      if (m.ahorrado >= m.objetivo) return;
+      var falta = m.objetivo - m.ahorrado;
+      var linea = '🎯 Meta "' + m.nombre + '": llevas ' + fmtCOP(m.ahorrado) + ' de ' + fmtCOP(m.objetivo)
+        + ' (' + Math.round(m.ahorrado / m.objetivo * 100) + '%).';
+      if (m.fecha && /^\d{4}-\d{2}/.test(m.fecha)) {
+        var limite = new Date(m.fecha + 'T12:00:00');
+        var mesesRest = Math.max((limite.getFullYear() - new Date().getFullYear()) * 12 + limite.getMonth() - new Date().getMonth(), 1);
+        linea += ' Para llegar a tiempo, ahorra ~' + fmtCOP(Math.ceil(falta / mesesRest)) + '/mes.';
+      }
+      avisos.push(linea);
+    });
+  }
+
+  if (avisos.length) {
+    // primero WhatsApp (si está configurado); el correo queda solo de respaldo
+    var texto = '💜 *Tus finanzas — avisos de hoy:*\n\n' + avisos.join('\n');
+    if (!enviarWhatsApp(texto)) {
+      MailApp.sendEmail({
+        to: email,
+        subject: '💜 Finanzas: ' + avisos.length + ' aviso(s) — ' + Utilities.formatDate(new Date(), TZ, 'dd/MM'),
+        htmlBody: '<div style="font-family:sans-serif"><h3>Tus avisos de hoy</h3><ul><li>' +
+          avisos.join('</li><li>') + '</li></ul><p>💜 Tu app de finanzas</p></div>'
+      });
+    }
+  }
+}
+
+function fmtCOP(n) {
+  return '$' + Number(n).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}

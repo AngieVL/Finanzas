@@ -2,38 +2,29 @@
 'use strict';
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
+// lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
 const CATS = [
-  { c: 'Seguridad social', g: 'GASTOS', e: '🏥' },
+  { c: 'Arriendo/Vivienda', g: 'GASTOS', e: '🏠' },
   { c: 'Servicios', g: 'GASTOS', e: '💡' },
   { c: 'Internet', g: 'GASTOS', e: '🌐' },
   { c: 'Datos móviles', g: 'GASTOS', e: '📱' },
   { c: 'Mercado, aseo', g: 'GASTOS', e: '🛒' },
-  { c: 'Comida Tobby', g: 'GASTOS', e: '🐶' },
-  { c: 'GYM', g: 'GASTOS', e: '🏋️' },
-  { c: 'Danza', g: 'GASTOS', e: '💃' },
-  { c: 'Cuota de manejo', g: 'GASTOS', e: '💳' },
-  { c: 'Mesada Patri', g: 'OBLIGACIONES', e: '👩‍🦳' },
+  { c: 'Deudas/Créditos', g: 'OBLIGACIONES', e: '💳' },
   { c: 'Donaciones', g: 'OBLIGACIONES', e: '🙏' },
-  { c: 'Abogada declaración renta', g: 'OBLIGACIONES', e: '📄' },
-  { c: 'Impuestos', g: 'OBLIGACIONES', e: '🏛️' },
   { c: 'Restaurantes', g: 'GUSTOS', e: '🍔' },
   { c: 'Ropa', g: 'GUSTOS', e: '👗' },
   { c: 'Transporte', g: 'GUSTOS', e: '🚕' },
   { c: 'Entretenimiento', g: 'GUSTOS', e: '🎬' },
-  { c: 'Hogar, muebles, decoración', g: 'GUSTOS', e: '🛋️' },
-  { c: 'Educación', g: 'GUSTOS', e: '📚' },
   { c: 'Otros', g: 'GUSTOS', e: '📦' },
-  { c: 'Provisión Tobby', g: 'PROVISIONES', e: '🦴' },
   { c: 'Provisión Tecnología', g: 'PROVISIONES', e: '💻' },
-  { c: 'Provisión Belleza/salud', g: 'PROVISIONES', e: '💅' },
+  { c: 'Provisión Salud/Belleza', g: 'PROVISIONES', e: '💅' },
   { c: 'Provisión Viajes', g: 'PROVISIONES', e: '✈️' },
   { c: 'Provisión Regalos', g: 'PROVISIONES', e: '🎁' },
-  { c: 'Provisión Independencia', g: 'PROVISIONES', e: '🏡' },
+  { c: 'Provisión Emergencias', g: 'PROVISIONES', e: '🚨' },
 ];
 const CATS_ING = [
   { c: 'Salario fijo', g: 'INGRESOS', e: '💼' },
-  { c: 'Freelances Forja', g: 'INGRESOS', e: '🔥' },
-  { c: 'Freelances Extras', g: 'INGRESOS', e: '✨' },
+  { c: 'Ingresos extra', g: 'INGRESOS', e: '✨' },
   { c: 'Otros Ingresos', g: 'INGRESOS', e: '➕' },
   { c: 'Reembolso', g: 'REEMBOLSOS', e: '🔄' },
 ];
@@ -79,7 +70,10 @@ function clasificar(desc, tipo) {
   for (const [re, c] of rules) if (re.test(desc)) { cat = c; break; }
   // si renombraste la categoría, usar el nombre nuevo
   const alias = (state && state.aliases) || {};
-  return alias[cat] || cat;
+  cat = alias[cat] || cat;
+  // nunca sugerir una categoría que no exista en TU presupuesto
+  if (!getCats(tipo).some(x => x.c === cat)) cat = tipo === 'Ingreso' ? 'Otros Ingresos' : 'Otros';
+  return cat;
 }
 
 // categorías actuales: las de tu hoja (editables); si no hay conexión aún, las de fábrica
@@ -263,7 +257,7 @@ function renderChips() {
     const chips = document.createElement('div');
     chips.className = 'chips';
     chips.style.width = '100%';
-    const personas = new Set(['Patri', 'Iduar', 'Ángela']);
+    const personas = new Set((prefs.personas || []));
     Object.keys((state && state.deudas) || {}).forEach(p => personas.add(p));
     Object.keys((state && state.custodias) || {}).forEach(p => personas.add(p));
     personas.forEach(p => {
@@ -314,6 +308,11 @@ async function guardar() {
     if (!personaSel) return toast('Elige quién 👤');
     tipo = { deuda: 'Por cobrar', abono: 'Abono', guardo: 'Guardo', entrego: 'Entrego' }[accionDeuda];
     categoria = personaSel;
+    // recordar a esta persona para las próximas veces
+    if (!(prefs.personas || []).includes(personaSel)) {
+      prefs.personas = (prefs.personas || []).concat(personaSel).slice(-15);
+      savePrefs();
+    }
     grupo = (accionDeuda === 'guardo' || accionDeuda === 'entrego') ? 'PLATA AJENA' : 'POR COBRAR';
   } else {
     categoria = catSel || clasificar(p.desc, tipo);
@@ -568,7 +567,7 @@ function initScan() {
 function renderScanReview(r) {
   const box = $('scan-review');
   const cats = getCats('Gasto');
-  const personas = new Set(['Patri', 'Iduar', 'Ángela']);
+  const personas = new Set((prefs.personas || []));
   Object.keys((state && state.deudas) || {}).forEach(p => personas.add(p));
   Object.keys((state && state.custodias) || {}).forEach(p => personas.add(p));
   let opciones = cats.map(c => `<option value="cat:${c.c}">${c.e} ${c.c.replace('Provisión ', 'P. ')}</option>`).join('');
@@ -1044,7 +1043,10 @@ async function renderMovs() {
 }
 
 // ---------------- chat (multi-conversación) ----------------
-const BIENVENIDA = '¡Hola Angie! 💜 Soy tu asesora financiera. Tengo acceso a tu presupuesto y todos tus movimientos. Pregúntame lo que quieras: "¿cómo voy este mes?", "¿en qué estoy gastando de más?", "¿cuánto puedo ahorrar?"';
+function BIENVENIDA() {
+  const n = prefs.nombre ? ` ${prefs.nombre}` : '';
+  return `¡Hola${n}! 💜 Soy tu asesora financiera. Tengo acceso a tu presupuesto y todos tus movimientos. Pregúntame lo que quieras: "¿cómo voy este mes?", "¿en qué estoy gastando de más?", "¿cuánto puedo ahorrar?"`;
+}
 
 function chatActivo() {
   let c = chats.find(x => x.id === chatActivoId);
@@ -1082,7 +1084,7 @@ function renderChatBox() {
   const c = chatActivo();
   const box = $('chat-mensajes');
   box.innerHTML = '';
-  addMsg(BIENVENIDA, 'bot');
+  addMsg(BIENVENIDA(), 'bot');
   c.msgs.forEach(m => addMsg(m.text, m.role === 'user' ? 'user' : 'bot'));
 }
 
@@ -1123,7 +1125,7 @@ async function enviarChat() {
   saveChats();
   const typing = addMsg('Pensando... 💭', 'bot typing');
   try {
-    const r = await api({ action: 'chat', message: text, history: c.msgs.slice(0, -1) });
+    const r = await api({ action: 'chat', message: text, history: c.msgs.slice(0, -1), nombre: prefs.nombre || '' });
     typing.remove();
     addMsg(r.reply, 'bot');
     c.msgs.push({ role: 'model', text: r.reply });
@@ -1501,6 +1503,13 @@ function init() {
     savePrefs();
     renderApariencia();
   });
+  $('cfg-nombre').value = prefs.nombre || '';
+  $('cfg-nombre').onchange = () => {
+    prefs.nombre = $('cfg-nombre').value.trim();
+    savePrefs();
+    renderChatBox();
+    toast(prefs.nombre ? `✓ ¡Hola ${prefs.nombre}! 💜` : 'Nombre borrado');
+  };
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyPrefs);
 
   $('mes-label').textContent = new Date().toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' });
