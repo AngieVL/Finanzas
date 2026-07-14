@@ -183,6 +183,7 @@ function handle(req) {
       case 'cat_delete':   out = catDelete(req.categoria); break;
       case 'cat_reorder':  out = catReorder(req.orden); break;
       case 'cat_fondo':    out = catFondo(req.categoria, req.fondo, req.desde); break;
+      case 'alcancia_ajustar': out = alcanciaAjustar(req.categoria, req.real); break;
       case 'cat_move':     out = catMove(req.categoria, req.grupo); break;
       case 'wipe_movimientos': out = wipeMovimientos(req.confirmar); break;
       case 'set_whatsapp': out = setWhatsapp(req.phone, req.key); break;
@@ -534,6 +535,28 @@ function catMove(categoria, grupo) {
   }
   buildDashboard(ss);
   return { ok: true, actualizados: actualizados };
+}
+
+// calibra la alcancía: la usuaria dice cuánto tiene HOY de verdad y se ajusta el fondo inicial
+function alcanciaAjustar(categoria, real) {
+  real = Number(real);
+  if (isNaN(real)) return { ok: false, error: 'Valor inválido' };
+  var st = getState();
+  var a = st.alcancias[categoria];
+  if (!a) return { ok: false, error: 'Esa categoría no es una provisión' };
+  var p = st.presupuesto.filter(function (x) { return x.categoria === categoria; })[0];
+  var delta = real - a.disponible;
+  var nuevoFondo = (p.fondoInicial || 0) + delta;
+
+  var shP = ss_().getSheetByName('Presupuesto');
+  var cats = shP.getRange(2, 2, Math.max(shP.getLastRow() - 1, 1), 1).getValues();
+  for (var i = 0; i < cats.length; i++) {
+    if (cats[i][0] === categoria) {
+      shP.getRange(i + 2, 4).setValue(nuevoFondo);
+      return { ok: true, disponible: real, ajuste: delta };
+    }
+  }
+  return { ok: false, error: 'No encontré la categoría' };
 }
 
 function catFondo(categoria, fondo, desde) {

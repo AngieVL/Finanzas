@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 17;
+const APP_VERSION = 18;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -474,7 +474,7 @@ async function renderResumen() {
       <div class="grupo-card">
         <h4><span>🏦 PROVISIONES (alcancías)</span><span>${fmt(dispTotal)} disponibles</span></h4>
         ${rows}
-        <p class="hint" style="margin-top:8px">Cada alcancía crece solita con tu aporte mensual. Tus compras salen del fondo acumulado — solo hay problema si una queda en negativo. Configúralas en ⚙️ Mis categorías (mantén presionada una provisión).</p>
+        <p class="hint" style="margin-top:8px">Cada alcancía crece solita con tu aporte mensual y tus compras salen del fondo acumulado. ¿El valor no coincide con tu plata real? En ⚙️ Mis categorías, mantén presionada la provisión → "🏦 Ajustar a lo que tengo HOY".</p>
       </div>`;
   }
 
@@ -1311,21 +1311,22 @@ let ordenMode = false;
 let ordenLista = null;
 
 async function configurarAlcancia(cat, p) {
-  const a = (state && state.alcancias && state.alcancias[cat]) || {};
-  const f = prompt(
-    `🏦 Alcancía de "${cat.replace('Provisión ', '')}"\n\n` +
-    `Cada mes se le suma tu aporte (${fmt(p.mensual)}).\n` +
-    `¿Cuánto tenía YA ahorrado ANTES de empezar a contar? (fondo inicial)`,
-    String(p.fondoInicial || 0));
-  if (f === null) return;
-  const fondo = parseInt(f.replace(/\D/g, ''), 10) || 0;
-  const d = prompt('¿Desde qué mes empieza a ahorrar? (formato: 2026-01)', p.desde || '2026-01');
-  if (d === null) return;
-  if (!/^\d{4}-\d{2}$/.test(d.trim())) return toast('El mes debe ser como 2026-01');
+  const a = (state && state.alcancias && state.alcancias[cat]) || { disponible: 0 };
+  const nombre = cat.replace('Provisión ', '');
+  const v = prompt(
+    `🏦 Alcancía de "${nombre}"\n\n` +
+    `Según la app, hoy tiene ${fmt(a.disponible)} disponibles.\n\n` +
+    `¿Cuánto tiene DE VERDAD hoy? Escribe el valor real y la app se calibra sola:`,
+    String(a.disponible || 0));
+  if (v === null) return;
+  const limpio = v.trim().replace(/[^\d-]/g, '');
+  const real = parseInt(limpio, 10);
+  if (isNaN(real)) return toast('Escribe un número, ej: 1500000');
   try {
-    await api({ action: 'cat_fondo', categoria: cat, fondo, desde: d.trim() });
-    toast('✓ Alcancía configurada');
+    const r = await api({ action: 'alcancia_ajustar', categoria: cat, real });
+    toast(`✓ Alcancía de ${nombre} calibrada: ${fmt(r.disponible)} disponibles`);
     await refreshState(); renderCatsConfig();
+    if (rtabActivo === 'mes') renderResumen();
   } catch (e) { toast('Error: ' + e.message); }
 }
 
@@ -1457,7 +1458,7 @@ function renderCatsConfig() {
     const p = state.presupuesto.find(x => x.categoria === cat);
     const acciones = [];
     if (p && p.grupo === 'PROVISIONES') {
-      acciones.push({ label: '🏦 Configurar alcancía (fondo y desde cuándo)', fn: () => configurarAlcancia(cat, p) });
+      acciones.push({ label: '🏦 Ajustar alcancía a lo que tengo HOY', fn: () => configurarAlcancia(cat, p) });
     }
     acciones.push(
       { label: '📂 Cambiar de grupo', fn: () => cambiarGrupo(cat, p ? p.grupo : '') },
