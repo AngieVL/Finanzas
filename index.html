@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="styles.css?v=16">
+<link rel="stylesheet" href="styles.css?v=17">
 </head>
 <body>
 
@@ -108,6 +108,10 @@
       <button id="cfg-probar" class="primary">Conectar y probar</button>
       <p id="cfg-estado" class="estado"></p>
       <a id="cfg-sheet-link" href="#" target="_blank" class="hidden link">📊 Abrir mi hoja de Google Sheets</a>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
+        <button id="btn-actualizar" class="secondary" style="width:auto;padding:10px 14px">🔄 Buscar actualización</button>
+        <span class="hint" id="app-version"></span>
+      </div>
     </div>
     <div class="card">
       <h3>✨ Chat con IA (Gemini, gratis)</h3>
@@ -185,6 +189,6 @@
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="app.js?v=16"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>

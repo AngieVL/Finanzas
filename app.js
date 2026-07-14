@@ -1,6 +1,8 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
+const APP_VERSION = 17;
+
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
 const CATS = [
@@ -1557,6 +1559,19 @@ function init() {
     savePrefs();
     renderApariencia();
   });
+  // versión y actualización manual
+  $('app-version').textContent = 'Tienes la versión v' + APP_VERSION;
+  $('btn-actualizar').onclick = async () => {
+    toast('🔄 Buscando la versión más reciente...');
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const r of regs) await r.update();
+      const keys = await caches.keys();
+      for (const k of keys) await caches.delete(k);
+    } catch (e) {}
+    location.reload();
+  };
+
   $('cfg-nombre').value = prefs.nombre || '';
   $('cfg-nombre').onchange = () => {
     prefs.nombre = $('cfg-nombre').value.trim();
