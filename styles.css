@@ -344,6 +344,17 @@ body.dark .deuda-row { border-bottom-color: #322a49; }
 .deuda-row .saldo { font-weight: 800; font-size: 14.5px; color: var(--amber); }
 .deuda-row .saldo.cero { color: var(--green); }
 
+/* ---------- inversiones de plata ajena (custodia) ---------- */
+.cust-inv {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 7px 10px; margin-top: 6px; border-radius: 10px;
+  background: var(--violet-light); cursor: pointer; font-size: 12.5px;
+}
+body.dark .cust-inv { background: #2a2440; }
+.cust-inv .ci-nombre { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cust-inv .ci-datos { text-align: right; color: var(--muted); flex-shrink: 0; }
+.cust-inv .ci-datos b { color: var(--text); }
+
 /* ---------- gráficas ---------- */
 .chart-card svg { width: 100%; height: auto; display: block; }
 .legend { display: flex; gap: 16px; margin: 4px 0 10px; font-size: 12.5px; color: var(--muted); }

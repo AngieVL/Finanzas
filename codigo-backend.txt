@@ -40,7 +40,8 @@ var PRESUPUESTO_2026 = [
 var MOV_HEADERS = ['ID', 'Fecha', 'Mes', 'Tipo', 'Grupo', 'Categoría', 'Monto', 'Descripción'];
 var REC_HEADERS = ['ID', 'Nombre', 'Día del mes', 'Monto aprox', 'Activo'];
 var META_HEADERS = ['ID', 'Nombre', 'Objetivo', 'Fecha límite', 'Ahorrado'];
-var INV_HEADERS = ['ID', 'Fecha', 'Cuenta', 'Monto', 'Nota'];
+var INV_HEADERS = ['ID', 'Fecha', 'Cuenta', 'Monto', 'Nota', 'Dueño'];
+var VAL_HEADERS = ['Dueño', 'Cuenta', 'Valor', 'Actualizado'];
 
 // ============================== SETUP (ejecutar 1 vez) ==============================
 function setup() {
@@ -103,7 +104,9 @@ function setup() {
   // --- Hojas Patrimonio, Metas e Inversiones ---
   patrimonioSheet_();
   metasSheet_();
-  invSheet_();
+  invSheet_().getRange(1, 6).setValue('Dueño')
+    .setFontWeight('bold').setBackground('#7c5cbf').setFontColor('white');
+  valoresSheet_();
 
   // --- Trigger diario de alertas (7am) ---
   var exists = ScriptApp.getProjectTriggers().some(function (t) {
@@ -195,8 +198,10 @@ function handle(req) {
       case 'meta_del':     out = metaDel(req.id); break;
       case 'meta_abonar':  out = metaAbonar(req.id, req.monto); break;
       case 'inversiones_get': out = inversionesGet(); break;
-      case 'inv_add':      out = invAdd(req.cuenta, req.monto, req.fecha, req.nota); break;
+      case 'inv_add':      out = invAdd(req.cuenta, req.monto, req.fecha, req.nota, req.dueno); break;
       case 'inv_del':      out = invDel(req.id); break;
+      case 'inv_valor':    out = invValor(req.dueno, req.cuenta, req.valor); break;
+      case 'persona_limpiar': out = personaLimpiar(req.persona, req.confirmar); break;
       case 'ping':         out = { ok: true, pong: true }; break;
       case 'setup':        out = { ok: true, url: setup() }; break;
       default:             out = { ok: false, error: 'Acción desconocida' };
@@ -296,7 +301,31 @@ function getState(mes) {
     if (m.tipo === 'Guardo') custodias[p].recibido += m.monto;
     if (m.tipo === 'Entrego') custodias[p].entregado += m.monto;
   });
-  for (var q in custodias) custodias[q].saldo = custodias[q].recibido - custodias[q].entregado;
+  // desglose: parte de su plata que está invertida (aportes con dueño) y su valor actual
+  var aportesInv = aportesInv_();
+  var valoresInv = valoresGet_();
+  for (var q in custodias) {
+    var c = custodias[q];
+    c.saldo = c.recibido - c.entregado;
+    c.cuentas = [];
+    var invertido = 0, valorTotal = 0;
+    for (var key in aportesInv) {
+      var sep = key.indexOf('|');
+      if (key.slice(0, sep) !== q) continue;
+      var nombreCuenta = key.slice(sep + 1);
+      var aportadoNeto = aportesInv[key];
+      var valor = valoresInv.hasOwnProperty(q + '|' + nombreCuenta) ? valoresInv[q + '|' + nombreCuenta] : null;
+      invertido += aportadoNeto;
+      valorTotal += (valor !== null ? valor : aportadoNeto);
+      c.cuentas.push({
+        cuenta: nombreCuenta, aportado: aportadoNeto, valorActual: valor,
+        ganancia: valor !== null ? valor - aportadoNeto : null,
+        rendimiento: (valor !== null && aportadoNeto > 0) ? Math.round((valor - aportadoNeto) / aportadoNeto * 1000) / 10 : null
+      });
+    }
+    c.efectivo = c.saldo - invertido;   // lo suyo que NO está invertido
+    c.totalReal = c.efectivo + valorTotal; // su plata real hoy (con ganancias)
+  }
 
   var shR = ss.getSheetByName('Recordatorios');
   var recs = shR.getLastRow() > 1
@@ -661,12 +690,106 @@ function invSheet_() {
   return sh;
 }
 
-function invAdd(cuenta, monto, fecha, nota) {
+function invAdd(cuenta, monto, fecha, nota, dueno) {
   cuenta = String(cuenta || '').trim();
   if (!cuenta || !Number(monto)) return { ok: false, error: 'Falta cuenta o monto' };
   invSheet_().appendRow(['i' + new Date().getTime(), fecha || Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'),
-                         cuenta, Number(monto), String(nota || '')]);
+                         cuenta, Number(monto), String(nota || ''), String(dueno || '').trim()]);
   return { ok: true };
+}
+
+// valores actuales de inversiones que no están en el Patrimonio (ej: las de plata ajena)
+function valoresSheet_() {
+  var ss = ss_();
+  var sh = ss.getSheetByName('ValoresInversiones');
+  if (!sh) {
+    sh = ss.insertSheet('ValoresInversiones');
+    sh.getRange(1, 1, 1, VAL_HEADERS.length).setValues([VAL_HEADERS])
+      .setFontWeight('bold').setBackground('#7c5cbf').setFontColor('white');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function valoresGet_() {
+  var ss = ss_();
+  var sh = ss.getSheetByName('ValoresInversiones');
+  var out = {};
+  if (sh && sh.getLastRow() > 1) {
+    sh.getRange(2, 1, sh.getLastRow() - 1, VAL_HEADERS.length).getValues().forEach(function (r) {
+      out[String(r[0]) + '|' + String(r[1])] = Number(r[2]) || 0;
+    });
+  }
+  return out;
+}
+
+function invValor(dueno, cuenta, valor) {
+  dueno = String(dueno || '').trim();
+  cuenta = String(cuenta || '').trim();
+  valor = Number(valor);
+  if (!cuenta || isNaN(valor)) return { ok: false, error: 'Falta cuenta o valor' };
+  var sh = valoresSheet_();
+  var hoy = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  if (sh.getLastRow() > 1) {
+    var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues();
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i][0]) === dueno && String(rows[i][1]) === cuenta) {
+        sh.getRange(i + 2, 3, 1, 2).setValues([[valor, hoy]]);
+        return { ok: true };
+      }
+    }
+  }
+  sh.appendRow([dueno, cuenta, valor, hoy]);
+  return { ok: true };
+}
+
+// borra TODO el rastro de una persona (deudas, custodia, inversiones ajenas y valores)
+function personaLimpiar(persona, confirmar) {
+  persona = String(persona || '').trim();
+  if (!persona || confirmar !== 'SI') return { ok: false, error: 'Falta persona o confirmación' };
+  var ss = ss_();
+  var borrados = 0;
+  // movimientos POR COBRAR / PLATA AJENA de esa persona
+  var shM = ss.getSheetByName('Movimientos');
+  if (shM.getLastRow() > 1) {
+    var vals = shM.getRange(2, 1, shM.getLastRow() - 1, MOV_HEADERS.length).getValues();
+    for (var i = vals.length - 1; i >= 0; i--) {
+      if (vals[i][5] === persona && (vals[i][4] === 'POR COBRAR' || vals[i][4] === 'PLATA AJENA')) {
+        shM.deleteRow(i + 2); borrados++;
+      }
+    }
+  }
+  // aportes de inversión con ese dueño
+  var shI = ss.getSheetByName('Inversiones');
+  if (shI && shI.getLastRow() > 1) {
+    var vi = shI.getRange(2, 1, shI.getLastRow() - 1, INV_HEADERS.length).getValues();
+    for (var j = vi.length - 1; j >= 0; j--) {
+      if (String(vi[j][5] || '') === persona) { shI.deleteRow(j + 2); borrados++; }
+    }
+  }
+  // valores de sus inversiones
+  var shV = ss.getSheetByName('ValoresInversiones');
+  if (shV && shV.getLastRow() > 1) {
+    var vv = shV.getRange(2, 1, shV.getLastRow() - 1, 2).getValues();
+    for (var k = vv.length - 1; k >= 0; k--) {
+      if (String(vv[k][0]) === persona) { shV.deleteRow(k + 2); borrados++; }
+    }
+  }
+  return { ok: true, borrados: borrados };
+}
+
+// aportes netos de inversión por dueño y cuenta (dueño '' = de la usuaria)
+function aportesInv_() {
+  var ss = ss_();
+  var sh = ss.getSheetByName('Inversiones');
+  var out = {};
+  if (sh && sh.getLastRow() > 1) {
+    sh.getRange(2, 1, sh.getLastRow() - 1, INV_HEADERS.length).getValues().forEach(function (r) {
+      var key = String(r[5] || '') + '|' + String(r[2]);
+      out[key] = (out[key] || 0) + (Number(r[3]) || 0);
+    });
+  }
+  return out;
 }
 
 function invDel(id) {
@@ -686,6 +809,7 @@ function inversionesGet() {
   var cuentas = {};
   var aportes = [];
   rows.forEach(function (r) {
+    if (String(r[5] || '').trim()) return; // las de plata ajena van en la tarjeta de custodia
     var c = r[2];
     if (!cuentas[c]) cuentas[c] = { cuenta: c, aportado: 0, movimientos: 0 };
     cuentas[c].aportado += Number(r[3]) || 0;
@@ -970,7 +1094,11 @@ function buildContext(st) {
     lines.push('\nPLATA AJENA QUE GUARDA EN SUS CUENTAS (custodia — no es de ella):');
     pers.forEach(function (p) {
       var c = st.custodias[p];
-      lines.push('- ' + p + ': recibido ' + c.recibido + ', entregado/gastado ' + c.entregado + ', SALDO A SU FAVOR ' + c.saldo);
+      lines.push('- ' + p + ': TOTAL REAL HOY ' + c.totalReal + ' (efectivo ' + c.efectivo + ')');
+      (c.cuentas || []).forEach(function (q) {
+        lines.push('   · invertido en ' + q.cuenta + ': aportado ' + q.aportado +
+          (q.valorActual !== null ? ', vale hoy ' + q.valorActual + ', ganancia ' + q.ganancia : ', valor actual sin registrar'));
+      });
     });
   }
   if (st.metas && st.metas.length) {

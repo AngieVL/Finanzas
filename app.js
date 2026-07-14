@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 18;
+const APP_VERSION = 19;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -520,34 +520,86 @@ function renderDeudas(st) {
       </div>`;
   }
 
-  // 👝 custodia: plata de OTROS que vive en mis cuentas
+  // 👝 custodia: plata de OTROS que vive en mis cuentas (con sus inversiones y ganancias)
   const cust = (st && st.custodias) || {};
-  const dueños = Object.keys(cust).filter(p => cust[p].recibido > 0 || cust[p].entregado > 0);
+  const dueños = Object.keys(cust).filter(p => cust[p].recibido > 0 || cust[p].entregado > 0 || (cust[p].cuentas || []).length);
   if (dueños.length) {
-    dueños.sort((a, b) => cust[b].saldo - cust[a].saldo);
-    const totalC = dueños.reduce((s, p) => s + cust[p].saldo, 0);
+    dueños.sort((a, b) => (cust[b].totalReal || 0) - (cust[a].totalReal || 0));
+    const totalC = dueños.reduce((s, p) => s + (cust[p].totalReal || 0), 0);
     let rows = '';
     dueños.forEach(p => {
       const c = cust[p];
+      const cuentas = c.cuentas || [];
+      let invHtml = '';
+      cuentas.forEach(q => {
+        const conValor = q.valorActual !== null && q.valorActual !== undefined;
+        invHtml += `
+          <div class="cust-inv" data-persona="${p}" data-cuenta="${q.cuenta}" title="Toca para actualizar su valor de hoy">
+            <span class="ci-nombre">📈 ${q.cuenta}</span>
+            <span class="ci-datos">${conValor
+              ? `vale <b>${fmt(q.valorActual)}</b> <span class="delta ${q.ganancia >= 0 ? 'pos' : 'neg'}">${q.ganancia >= 0 ? '▲' : '▼'}${fmt(Math.abs(q.ganancia))}${q.rendimiento !== null ? ' (' + (q.ganancia >= 0 ? '+' : '−') + Math.abs(q.rendimiento) + '%)' : ''}</span>`
+              : `aportado ${fmt(q.aportado)} · <i>toca y ponle su valor de hoy</i>`}</span>
+          </div>`;
+      });
       rows += `
-        <div class="deuda-row">
-          <div style="flex:1">
-            <div class="quien">👝 ${p}</div>
-            <div class="detalle">recibí ${fmt(c.recibido)} · le entregué ${fmt(c.entregado)}</div>
+        <div class="deuda-row" style="flex-wrap:wrap">
+          <div style="flex:1;min-width:55%">
+            <div class="quien">👝 ${p} ${cuentas.length ? '<span class="tag">con inversiones</span>' : ''}</div>
+            <div class="detalle">💵 disponible ${fmt(c.efectivo)} · recibido ${fmt(c.recibido)} · entregado ${fmt(c.entregado)}</div>
           </div>
-          <span class="saldo custodia ${c.saldo < 0 ? 'negc' : ''}">${c.saldo < 0 ? '−' : ''}${fmt(Math.abs(c.saldo))}</span>
+          <span class="saldo custodia ${c.totalReal < 0 ? 'negc' : ''}">${c.totalReal < 0 ? '−' : ''}${fmt(Math.abs(c.totalReal))}</span>
+          <div style="width:100%">
+            ${invHtml}
+            <button class="chip-btn cust-invertir" data-persona="${p}" style="margin-top:6px;font-size:12px;padding:6px 12px">📈 Invertí su plata</button>
+          </div>
         </div>
-        ${c.saldo < 0 ? '<p class="hint" style="color:var(--red)">Le has entregado más de lo que tenía guardado — ese excedente salió de TU plata (considera registrarlo como préstamo 🤝).</p>' : ''}`;
+        ${c.efectivo < 0 ? '<p class="hint" style="color:var(--red)">Su disponible quedó negativo: le has entregado o invertido más de lo que tenía en efectivo. Revisa los registros, o la diferencia salió de TU plata (regístrala como préstamo 🤝).</p>' : ''}`;
     });
     html += `
       <div class="grupo-card">
         <h4><span>👝 PLATA QUE GUARDO (de otros)</span><span>${fmt(totalC)}</span></h4>
         ${rows}
-        <p class="hint" style="margin-top:8px">Plata ajena que vive en tus cuentas (ej: la pensión de tu mamá). No cuenta como tuya ni afecta tu presupuesto.</p>
+        <p class="hint" style="margin-top:8px">Su plata real hoy = disponible + valor de sus inversiones (con ganancias incluidas). Toca una inversión para actualizar cuánto vale. Nada de esto cuenta en tu presupuesto ni en tu patrimonio.</p>
       </div>`;
   }
 
   box.innerHTML = html;
+
+  // eventos: invertir plata ajena y actualizar valores de sus inversiones
+  box.querySelectorAll('.cust-invertir').forEach(b => b.onclick = async () => {
+    const persona = b.dataset.persona;
+    const previas = ((cust[persona] || {}).cuentas || []).map(q => q.cuenta);
+    const cuenta = prompt(
+      `📈 ¿En cuál inversión moviste plata de ${persona}?` +
+      (previas.length ? `\n\nYa existen: ${previas.join(' · ')}\n(mismo nombre = sumar ahí; otro nombre = nueva)` : '\n\nEj: Inversión Virtual Bancolombia'),
+      previas[0] || '');
+    if (!cuenta || !cuenta.trim()) return;
+    const v = prompt(`¿Cuánto de su plata moviste a "${cuenta.trim()}"?\n(negativo si SACASTE de la inversión a su disponible)`);
+    if (v === null) return;
+    const raw = v.trim();
+    const monto = (raw.startsWith('-') ? -1 : 1) * (parseInt(raw.replace(/\D/g, ''), 10) || 0);
+    if (!monto) return toast('Escribe el monto');
+    try {
+      await api({ action: 'inv_add', cuenta: cuenta.trim(), monto, dueno: persona, nota: 'plata de ' + persona });
+      toast(`✓ ${fmt(Math.abs(monto))} ${monto > 0 ? 'invertidos' : 'devueltos a su disponible'}`);
+      await refreshState(); renderDeudas(state);
+    } catch (e) { toast('Error: ' + e.message); }
+  });
+  box.querySelectorAll('.cust-inv').forEach(el => el.onclick = async () => {
+    const persona = el.dataset.persona, cuenta = el.dataset.cuenta;
+    const q = ((cust[persona] || {}).cuentas || []).find(x => x.cuenta === cuenta) || {};
+    const v = prompt(
+      `💹 ¿Cuánto vale HOY "${cuenta}" de ${persona}?\n(míralo en la app del banco — con esto se calcula su ganancia)`,
+      String(q.valorActual !== null && q.valorActual !== undefined ? q.valorActual : (q.aportado || '')));
+    if (v === null) return;
+    const valor = parseInt(v.replace(/\D/g, ''), 10);
+    if (isNaN(valor)) return toast('Escribe un número');
+    try {
+      await api({ action: 'inv_valor', dueno: persona, cuenta, valor });
+      toast(`✓ ${cuenta}: vale ${fmt(valor)}`);
+      await refreshState(); renderDeudas(state);
+    } catch (e) { toast('Error: ' + e.message); }
+  });
 }
 
 // ---------------- escanear factura 📷 ----------------
