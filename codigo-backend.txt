@@ -266,6 +266,43 @@ function getState(mes) {
   movs.forEach(function (m) {
     if (m.tipo === 'Gasto' && m.mes <= mes) gastadoTotal[m.categoria] = (gastadoTotal[m.categoria] || 0) + m.monto;
   });
+  // inversiones: aportes y valores (para alcancías y custodias)
+  var aportesInv = aportesInv_();
+  var valoresInv = valoresGet_();
+  // valor de la porción de un dueño en una cuenta: valor explícito, o reparto
+  // proporcional si se registró el TOTAL de la cuenta compartida (fila dueño '*')
+  function valorPorcion(dueno, cuenta, aportadoNeto) {
+    var k = dueno + '|' + cuenta;
+    if (valoresInv.hasOwnProperty(k)) return valoresInv[k];
+    var tk = '*|' + cuenta;
+    if (valoresInv.hasOwnProperty(tk)) {
+      var totalAportes = 0;
+      for (var kk in aportesInv) {
+        if (kk.slice(kk.indexOf('|') + 1) === cuenta) totalAportes += aportesInv[kk];
+      }
+      if (totalAportes > 0) return Math.round(valoresInv[tk] * aportadoNeto / totalAportes);
+    }
+    return null;
+  }
+  function desgloseInversiones(dueno, base) {
+    var cuentas = [], invertido = 0, valorTotal = 0;
+    for (var key in aportesInv) {
+      var sep = key.indexOf('|');
+      if (key.slice(0, sep) !== dueno) continue;
+      var nombreCuenta = key.slice(sep + 1);
+      var aportadoNeto = aportesInv[key];
+      var valor = valorPorcion(dueno, nombreCuenta, aportadoNeto);
+      invertido += aportadoNeto;
+      valorTotal += (valor !== null ? valor : aportadoNeto);
+      cuentas.push({
+        cuenta: nombreCuenta, aportado: aportadoNeto, valorActual: valor,
+        ganancia: valor !== null ? valor - aportadoNeto : null,
+        rendimiento: (valor !== null && aportadoNeto > 0) ? Math.round((valor - aportadoNeto) / aportadoNeto * 1000) / 10 : null
+      });
+    }
+    return { cuentas: cuentas, efectivo: base - invertido, totalReal: (base - invertido) + valorTotal };
+  }
+
   var alcancias = {};
   pres.forEach(function (p) {
     if (p.grupo !== 'PROVISIONES') return;
@@ -275,10 +312,14 @@ function getState(mes) {
     if (n < 0) n = 0;
     var ahorrado = p.fondoInicial + p.mensual * n;
     var gastado = gastadoTotal[p.categoria] || 0;
-    alcancias[p.categoria] = {
+    var a = {
       ahorrado: ahorrado, gastado: gastado, disponible: ahorrado - gastado,
       mensual: p.mensual, desde: desde, meses: n
     };
+    // desglose físico: cuánto está invertido (dueño = nombre de la alcancía) y cuánto en bolsillos
+    var d = desgloseInversiones(p.categoria, a.disponible);
+    a.cuentas = d.cuentas; a.efectivo = d.efectivo; a.totalReal = d.totalReal;
+    alcancias[p.categoria] = a;
   });
 
   // deudas por persona (sobre TODO el historial, no solo el mes)
@@ -301,30 +342,12 @@ function getState(mes) {
     if (m.tipo === 'Guardo') custodias[p].recibido += m.monto;
     if (m.tipo === 'Entrego') custodias[p].entregado += m.monto;
   });
-  // desglose: parte de su plata que está invertida (aportes con dueño) y su valor actual
-  var aportesInv = aportesInv_();
-  var valoresInv = valoresGet_();
+  // desglose: parte de su plata que está invertida y su valor actual (con reparto proporcional si aplica)
   for (var q in custodias) {
     var c = custodias[q];
     c.saldo = c.recibido - c.entregado;
-    c.cuentas = [];
-    var invertido = 0, valorTotal = 0;
-    for (var key in aportesInv) {
-      var sep = key.indexOf('|');
-      if (key.slice(0, sep) !== q) continue;
-      var nombreCuenta = key.slice(sep + 1);
-      var aportadoNeto = aportesInv[key];
-      var valor = valoresInv.hasOwnProperty(q + '|' + nombreCuenta) ? valoresInv[q + '|' + nombreCuenta] : null;
-      invertido += aportadoNeto;
-      valorTotal += (valor !== null ? valor : aportadoNeto);
-      c.cuentas.push({
-        cuenta: nombreCuenta, aportado: aportadoNeto, valorActual: valor,
-        ganancia: valor !== null ? valor - aportadoNeto : null,
-        rendimiento: (valor !== null && aportadoNeto > 0) ? Math.round((valor - aportadoNeto) / aportadoNeto * 1000) / 10 : null
-      });
-    }
-    c.efectivo = c.saldo - invertido;   // lo suyo que NO está invertido
-    c.totalReal = c.efectivo + valorTotal; // su plata real hoy (con ganancias)
+    var dq = desgloseInversiones(q, c.saldo);
+    c.cuentas = dq.cuentas; c.efectivo = dq.efectivo; c.totalReal = dq.totalReal;
   }
 
   var shR = ss.getSheetByName('Recordatorios');
@@ -1076,7 +1099,11 @@ function buildContext(st) {
     lines.push('\nALCANCÍAS (fondos de las provisiones — el presupuesto mensual es AHORRO, los gastos salen del fondo acumulado; solo es problema si el disponible es negativo):');
     for (var cat in st.alcancias) {
       var a = st.alcancias[cat];
-      lines.push('- ' + cat + ': ahorrado total ' + a.ahorrado + ', gastado total ' + a.gastado + ', DISPONIBLE ' + a.disponible);
+      lines.push('- ' + cat + ': DISPONIBLE ' + a.disponible + ' (total real con ganancias: ' + a.totalReal + ', en bolsillos/efectivo: ' + a.efectivo + ')');
+      (a.cuentas || []).forEach(function (q) {
+        lines.push('   · invertido en ' + q.cuenta + ': aportado ' + q.aportado +
+          (q.valorActual !== null ? ', vale hoy ' + q.valorActual + ', ganancia ' + q.ganancia : ''));
+      });
     }
   }
   st.movimientos.forEach(function (m) { if (m.tipo === 'Ingreso' && m.mes === st.mes) totalIng += m.monto; });

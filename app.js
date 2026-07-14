@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 19;
+const APP_VERSION = 20;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -454,31 +454,96 @@ async function renderResumen() {
   if (provCats.length) {
     const dispTotal = provCats.reduce((s, p) => s + (alc[p.categoria] ? alc[p.categoria].disponible : 0), 0);
     let rows = '';
+    let gananciaTotal = 0;
     provCats.forEach(p => {
       const a = alc[p.categoria];
       if (!a) return;
       const gastadoMes = tot[p.categoria] || 0;
       const pctUsado = a.ahorrado > 0 ? Math.min(a.gastado / a.ahorrado, 1) : 0;
       const negativa = a.disponible < 0;
+      const cuentas = a.cuentas || [];
+      let invHtml = '';
+      if (cuentas.length) {
+        invHtml += `<div class="alc-detalle">💵 en bolsillos/efectivo: <b>${fmt(a.efectivo)}</b></div>`;
+        cuentas.forEach(q => {
+          const conValor = q.valorActual !== null && q.valorActual !== undefined;
+          if (conValor && q.ganancia !== null) gananciaTotal += q.ganancia;
+          invHtml += `
+            <div class="cust-inv alc-inv" data-alc="${p.categoria}" data-cuenta="${q.cuenta}" title="Toca para actualizar su valor">
+              <span class="ci-nombre">📈 ${q.cuenta}</span>
+              <span class="ci-datos">${conValor
+                ? `vale <b>${fmt(q.valorActual)}</b> <span class="delta ${q.ganancia >= 0 ? 'pos' : 'neg'}">${q.ganancia >= 0 ? '▲' : '▼'}${fmt(Math.abs(q.ganancia))}${q.rendimiento !== null ? ' (' + (q.ganancia >= 0 ? '+' : '−') + Math.abs(q.rendimiento) + '%)' : ''}</span>`
+                : `aportado ${fmt(q.aportado)} · <i>toca y ponle valor</i>`}</span>
+            </div>`;
+        });
+      }
       rows += `
         <div class="cat-row">
           <div class="info">
             <span class="nombre">${emoji(p.categoria)} ${p.categoria.replace('Provisión ', '')}</span>
-            <span class="valores ${negativa ? 'neg-txt' : ''}"><b>${negativa ? '−' : ''}${fmt(Math.abs(a.disponible))}</b> disponibles</span>
+            <span class="valores ${negativa ? 'neg-txt' : ''}"><b>${negativa ? '−' : ''}${fmt(Math.abs(cuentas.length ? a.totalReal : a.disponible))}</b> ${cuentas.length ? 'total real' : 'disponibles'}</span>
           </div>
           <div class="barra"><div class="${negativa ? 'over' : ''}" style="width:${Math.round(pctUsado * 100)}%; ${negativa ? '' : 'background:var(--chart-gasto)'}"></div></div>
           <div class="alc-detalle">ahorras ${fmt(a.mensual)}/mes desde ${mesCorto(a.desde)} ${a.desde.slice(0, 4)}${gastadoMes ? ` · este mes gastaste ${fmt(gastadoMes)}` : ''}</div>
+          ${invHtml}
         </div>`;
     });
     html += `
       <div class="grupo-card">
-        <h4><span>🏦 PROVISIONES (alcancías)</span><span>${fmt(dispTotal)} disponibles</span></h4>
+        <h4><span>🏦 PROVISIONES (alcancías)</span><span>${fmt(dispTotal)} disponibles${gananciaTotal ? ` <span class="delta ${gananciaTotal >= 0 ? 'pos' : 'neg'}">${gananciaTotal >= 0 ? '▲' : '▼'}${fmt(Math.abs(gananciaTotal))}</span>` : ''}</span></h4>
         ${rows}
-        <p class="hint" style="margin-top:8px">Cada alcancía crece solita con tu aporte mensual y tus compras salen del fondo acumulado. ¿El valor no coincide con tu plata real? En ⚙️ Mis categorías, mantén presionada la provisión → "🏦 Ajustar a lo que tengo HOY".</p>
+        <button class="chip-btn" id="alc-invertir" style="margin-top:8px;font-size:12px;padding:6px 12px">📈 Invertí plata de una alcancía</button>
+        <p class="hint" style="margin-top:8px">Cada alcancía crece con tu aporte mensual y tus compras salen del fondo. Si parte está invertida, toca la inversión para actualizar cuánto vale — puedes poner el TOTAL de una cuenta compartida (como Insights) y la ganancia se reparte proporcional entre las alcancías. ¿No cuadra? ⚙️ Mis categorías → mantener presionada → 🏦 Ajustar.</p>
       </div>`;
   }
 
   $('resumen-grupos').innerHTML = html;
+
+  // eventos de inversiones de alcancías
+  const btnAlcInv = $('alc-invertir');
+  if (btnAlcInv) btnAlcInv.onclick = () => {
+    actionSheet('📈 ¿De cuál alcancía invertiste plata?', provCats.map(p => ({
+      label: `${emoji(p.categoria)} ${p.categoria.replace('Provisión ', '')}`,
+      fn: async () => {
+        const previas = ((alc[p.categoria] || {}).cuentas || []).map(q => q.cuenta);
+        const cuenta = prompt(
+          `📈 ¿A cuál inversión moviste plata de "${p.categoria.replace('Provisión ', '')}"?` +
+          (previas.length ? `\n\nYa existen: ${previas.join(' · ')}\n(mismo nombre = sumar ahí)` : '\n\nEj: Insights'),
+          previas[0] || 'Insights');
+        if (!cuenta || !cuenta.trim()) return;
+        const v = prompt(`¿Cuánto moviste a "${cuenta.trim()}"?\n(negativo si SACASTE de la inversión al bolsillo)`);
+        if (v === null) return;
+        const raw = v.trim();
+        const monto = (raw.startsWith('-') ? -1 : 1) * (parseInt(raw.replace(/\D/g, ''), 10) || 0);
+        if (!monto) return toast('Escribe el monto');
+        try {
+          await api({ action: 'inv_add', cuenta: cuenta.trim(), monto, dueno: p.categoria, nota: 'alcancía' });
+          toast(`✓ ${fmt(Math.abs(monto))} ${monto > 0 ? 'invertidos' : 'devueltos al bolsillo'}`);
+          await refreshState(); renderResumen();
+        } catch (e) { toast('Error: ' + e.message); }
+      }
+    })));
+  };
+  document.querySelectorAll('.alc-inv').forEach(el => el.onclick = () => {
+    const cat = el.dataset.alc, cuenta = el.dataset.cuenta;
+    const q = ((alc[cat] || {}).cuentas || []).find(x => x.cuenta === cuenta) || {};
+    const pedirValor = async (dueno, titulo, sugerido) => {
+      const v = prompt(titulo, String(sugerido || ''));
+      if (v === null) return;
+      const valor = parseInt(v.replace(/\D/g, ''), 10);
+      if (isNaN(valor)) return toast('Escribe un número');
+      try {
+        await api({ action: 'inv_valor', dueno, cuenta, valor });
+        toast('✓ Valor actualizado');
+        await refreshState(); renderResumen();
+      } catch (e) { toast('Error: ' + e.message); }
+    };
+    actionSheet(`💹 ${cuenta}`, [
+      { label: `Valor solo de la parte de "${cat.replace('Provisión ', '')}"`, fn: () => pedirValor(cat, `¿Cuánto vale HOY la parte de ${cat.replace('Provisión ', '')} en "${cuenta}"?`, q.valorActual ?? q.aportado) },
+      { label: `Valor TOTAL de "${cuenta}" (se reparte entre todas)`, fn: () => pedirValor('*', `¿Cuánto vale HOY la cuenta "${cuenta}" COMPLETA?\n(la ganancia se repartirá proporcional entre las alcancías que aportaron)`) },
+    ]);
+  });
+
   renderDeudas(st);
 
   // banner si hay categorías pasadas (solo mes actual); las provisiones se miden por su alcancía
