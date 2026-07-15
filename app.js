@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 20;
+const APP_VERSION = 21;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -1726,6 +1726,16 @@ function init() {
   $('rec-add').onclick = agregarRec;
   $('cat-nueva-btn').onclick = crearCategoria;
   $('wa-save').onclick = guardarWhatsApp;
+  $('wa-discreto').checked = !!prefs.waDiscreto;
+  $('wa-discreto').onchange = async () => {
+    const on = $('wa-discreto').checked;
+    try {
+      await api({ action: 'set_discreto', on });
+      prefs.waDiscreto = on;
+      savePrefs();
+      toast(on ? '🕶️ Modo discreto activado: WhatsApp sin montos' : 'Modo discreto desactivado');
+    } catch (e) { $('wa-discreto').checked = !on; toast('Error: ' + e.message); }
+  };
 
   // chat: conversaciones y voz
   renderChatBox();

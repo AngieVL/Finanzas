@@ -190,6 +190,7 @@ function handle(req) {
       case 'cat_move':     out = catMove(req.categoria, req.grupo); break;
       case 'wipe_movimientos': out = wipeMovimientos(req.confirmar); break;
       case 'set_whatsapp': out = setWhatsapp(req.phone, req.key); break;
+      case 'set_discreto': out = setDiscreto(req.on); break;
       case 'test_whatsapp': out = testWhatsapp(); break;
       case 'tendencias':   out = getTendencias(); break;
       case 'patrimonio_get':  out = patrimonioGet(); break;
@@ -986,8 +987,13 @@ function cierreMes() {
     lineas.push((i + 1) + '. ' + fmtCOP(g.monto) + ' — ' + (g.descripcion || g.categoria));
   });
   var texto = lineas.filter(function (l) { return l !== null && l !== undefined; }).join('\n');
+  var discreto = esDiscreto_();
+  var textoWA = discreto
+    ? '💜 ¡Tu cierre de ' + nombreMes + ' está listo! Ábrelo en la app 📊 (el detalle llegó a tu correo)'
+    : texto;
 
-  if (!enviarWhatsApp(texto)) {
+  var waOk = enviarWhatsApp(textoWA);
+  if (!waOk || discreto) {
     MailApp.sendEmail({
       to: Session.getEffectiveUser().getEmail(),
       subject: '💜 Cierre de mes: ' + nombreMes,
@@ -1018,6 +1024,16 @@ function enviarWhatsApp(texto) {
       { muteHttpExceptions: true });
     return r.getResponseCode() === 200;
   } catch (e) { return false; }
+}
+
+// modo discreto: los WhatsApp llegan sin montos (el bot intermediario no ve tus cifras)
+function setDiscreto(on) {
+  PropertiesService.getScriptProperties().setProperty('WA_DISCRETO', on === true || on === 'true' || on === '1' ? '1' : '');
+  return { ok: true, discreto: on === true || on === 'true' || on === '1' };
+}
+
+function esDiscreto_() {
+  return PropertiesService.getScriptProperties().getProperty('WA_DISCRETO') === '1';
 }
 
 function testWhatsapp() {
@@ -1241,9 +1257,13 @@ function dailyCheck() {
   }
 
   if (avisos.length) {
-    // primero WhatsApp (si está configurado); el correo queda solo de respaldo
-    var texto = '💜 *Tus finanzas — avisos de hoy:*\n\n' + avisos.join('\n');
-    if (!enviarWhatsApp(texto)) {
+    var discreto = esDiscreto_();
+    // en modo discreto el WhatsApp avisa SIN montos y el detalle completo va al correo
+    var texto = discreto
+      ? '💜 Tienes ' + avisos.length + ' aviso(s) de tus finanzas. Abre tu app para verlos.'
+      : '💜 *Tus finanzas — avisos de hoy:*\n\n' + avisos.join('\n');
+    var waOk = enviarWhatsApp(texto);
+    if (!waOk || discreto) {
       MailApp.sendEmail({
         to: email,
         subject: '💜 Finanzas: ' + avisos.length + ' aviso(s) — ' + Utilities.formatDate(new Date(), TZ, 'dd/MM'),
