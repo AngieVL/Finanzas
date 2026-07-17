@@ -191,6 +191,7 @@ function handle(req) {
       case 'wipe_movimientos': out = wipeMovimientos(req.confirmar); break;
       case 'set_whatsapp': out = setWhatsapp(req.phone, req.key); break;
       case 'set_discreto': out = setDiscreto(req.on); break;
+      case 'set_dia_abono': out = setDiaAbono(req.dia); break;
       case 'test_whatsapp': out = testWhatsapp(); break;
       case 'tendencias':   out = getTendencias(); break;
       case 'patrimonio_get':  out = patrimonioGet(); break;
@@ -305,11 +306,16 @@ function getState(mes) {
   }
 
   var alcancias = {};
+  // el aporte mensual entra a la alcancía el día DIA_ABONO (ej: el 16, día de quincena)
+  var diaAbono = Number(PropertiesService.getScriptProperties().getProperty('DIA_ABONO') || 1);
+  var mesActualReal = Utilities.formatDate(new Date(), TZ, 'yyyy-MM');
+  var diaHoy = Number(Utilities.formatDate(new Date(), TZ, 'd'));
   pres.forEach(function (p) {
     if (p.grupo !== 'PROVISIONES') return;
     var desde = /^\d{4}-\d{2}$/.test(p.desde) ? p.desde : '2026-01';
     var n = (Number(mes.slice(0, 4)) - Number(desde.slice(0, 4))) * 12
           + (Number(mes.slice(5, 7)) - Number(desde.slice(5, 7))) + 1;
+    if (mes === mesActualReal && diaHoy < diaAbono) n -= 1; // el aporte de este mes aún no ha entrado
     if (n < 0) n = 0;
     var ahorrado = p.fondoInicial + p.mensual * n;
     var gastado = gastadoTotal[p.categoria] || 0;
@@ -366,6 +372,7 @@ function getState(mes) {
     deudas: deudas,
     custodias: custodias,
     alcancias: alcancias,
+    diaAbono: diaAbono,
     metas: metasGet_(),
     aliases: JSON.parse(PropertiesService.getScriptProperties().getProperty('RENAMES') || '{}'),
     sheetUrl: ss.getUrl()
@@ -1024,6 +1031,13 @@ function enviarWhatsApp(texto) {
       { muteHttpExceptions: true });
     return r.getResponseCode() === 200;
   } catch (e) { return false; }
+}
+
+// día del mes en que el aporte mensual entra a las alcancías (ej: 16 = quincena)
+function setDiaAbono(dia) {
+  dia = Math.max(1, Math.min(28, Number(dia) || 1));
+  PropertiesService.getScriptProperties().setProperty('DIA_ABONO', String(dia));
+  return { ok: true, dia: dia };
 }
 
 // modo discreto: los WhatsApp llegan sin montos (el bot intermediario no ve tus cifras)

@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 21;
+const APP_VERSION = 22;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -493,7 +493,7 @@ async function renderResumen() {
         <h4><span>🏦 PROVISIONES (alcancías)</span><span>${fmt(dispTotal)} disponibles${gananciaTotal ? ` <span class="delta ${gananciaTotal >= 0 ? 'pos' : 'neg'}">${gananciaTotal >= 0 ? '▲' : '▼'}${fmt(Math.abs(gananciaTotal))}</span>` : ''}</span></h4>
         ${rows}
         <button class="chip-btn" id="alc-invertir" style="margin-top:8px;font-size:12px;padding:6px 12px">📈 Invertí plata de una alcancía</button>
-        <p class="hint" style="margin-top:8px">Cada alcancía crece con tu aporte mensual y tus compras salen del fondo. Si parte está invertida, toca la inversión para actualizar cuánto vale — puedes poner el TOTAL de una cuenta compartida (como Insights) y la ganancia se reparte proporcional entre las alcancías. ¿No cuadra? ⚙️ Mis categorías → mantener presionada → 🏦 Ajustar.</p>
+        <p class="hint" style="margin-top:8px">El aporte de cada mes entra a las alcancías el día ${st.diaAbono || 1} 📅. Tus compras salen del fondo acumulado. Si parte está invertida, toca la inversión para actualizar cuánto vale — puedes poner el TOTAL de una cuenta compartida (como Insights) y la ganancia se reparte proporcional. ¿No cuadra? ⚙️ Mis categorías → mantener presionada → 🏦 Ajustar.</p>
       </div>`;
   }
 
