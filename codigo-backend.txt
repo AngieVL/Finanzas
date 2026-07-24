@@ -1231,20 +1231,24 @@ function dailyCheck() {
   var hoy = Number(Utilities.formatDate(new Date(), TZ, 'd'));
   var avisos = [];
 
-  st.presupuesto.forEach(function (p) {
-    if (p.grupo === 'INGRESOS' || p.grupo === 'PROVISIONES' || p.mensual <= 0) return;
-    var usado = st.totales[p.categoria] || 0;
-    var pct = usado / p.mensual;
-    if (pct >= 1) avisos.push('🚨 ' + p.categoria + ': te pasaste (' + fmtCOP(usado) + ' de ' + fmtCOP(p.mensual) + ')');
-    else if (pct >= 0.8) avisos.push('⚠️ ' + p.categoria + ': vas en ' + Math.round(pct * 100) + '% (' + fmtCOP(usado) + ' de ' + fmtCOP(p.mensual) + ')');
-  });
-
-  // provisiones: solo alertar si la ALCANCÍA (fondo acumulado) queda en negativo
-  for (var cat in st.alcancias) {
-    var a = st.alcancias[cat];
-    if (a.disponible < 0) {
-      avisos.push('🚨 Alcancía de ' + cat.replace('Provisión ', '') + ' en negativo: gastado ' + fmtCOP(a.gastado) + ' vs ahorrado ' + fmtCOP(a.ahorrado));
+  // mini-reporte de presupuesto: SOLO los días 16 y último de mes (quincenal), SIN montos
+  var ultimoDia = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+  if (hoy === 16 || hoy === ultimoDia) {
+    var pasadas = [], cerca = [];
+    st.presupuesto.forEach(function (p) {
+      if (p.grupo === 'INGRESOS' || p.grupo === 'PROVISIONES' || p.mensual <= 0) return;
+      var pct = (st.totales[p.categoria] || 0) / p.mensual;
+      if (pct >= 1) pasadas.push(p.categoria);
+      else if (pct >= 0.8) cerca.push(p.categoria);
+    });
+    for (var cat in st.alcancias) {
+      if (st.alcancias[cat].disponible < 0) pasadas.push(cat.replace('Provisión ', '') + ' (alcancía)');
     }
+    avisos.push('📊 *Mini-reporte de la quincena:*');
+    if (pasadas.length) avisos.push('🚨 Te pasaste del presupuesto en: ' + pasadas.join(', '));
+    if (cerca.length) avisos.push('⚠️ Cerca del límite: ' + cerca.join(', '));
+    if (!pasadas.length && !cerca.length) avisos.push('✅ ¡Presupuesto bajo control! 🎉');
+    avisos.push('Los detalles y montos te esperan en la app 💜');
   }
 
   st.recordatorios.forEach(function (r) {
