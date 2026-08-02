@@ -336,13 +336,18 @@ body.dark .pd-tot { background: #2a2440; }
   padding: 9px 2px; border-bottom: 1px solid #f0edf9; font-size: 13.5px;
 }
 body.dark .pd-mov { border-bottom-color: #322a49; }
-.pd-mov .emoji { font-size: 18px; }
+.pd-mov .emoji { font-size: 18px; flex-shrink: 0; }
 .pd-mov .det { flex: 1; min-width: 0; }
 .pd-mov .desc { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pd-mov .meta { font-size: 11px; color: var(--muted); }
-.pd-mov .monto { font-weight: 800; }
+.pd-mov .meta { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-mov .monto { font-weight: 800; flex-shrink: 0; }
 .pd-mov .monto.ing { color: var(--green); }
-.pd-mov .del { border: none; background: none; color: #ccc5e0; cursor: pointer; }
+/* el ✕ NO debe heredar el estilo de botón grande de la ventana */
+.sheet .pd-mov button.del {
+  display: inline-block; width: auto; padding: 4px 8px; margin: 0;
+  border: none; background: none; color: #ccc5e0;
+  font-size: 15px; font-weight: 400; cursor: pointer; flex-shrink: 0;
+}
 .sheet .pd-cerrar {
   background: var(--violet-light); color: var(--violet-dark); margin-bottom: 0;
 }

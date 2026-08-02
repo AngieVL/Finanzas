@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 24;
+const APP_VERSION = 25;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -700,6 +700,7 @@ async function verPersona(persona) {
   if (!d.movimientos.length) {
     lista = '<p class="hint">Sin movimientos registrados con esta persona.</p>';
   }
+  const fechaCorta = f => `${Number(f.slice(8, 10))} ${mesCorto(f.slice(0, 7)).toLowerCase()}${f.slice(0, 4) !== String(new Date().getFullYear()) ? ' ' + f.slice(2, 4) : ''}`;
   d.movimientos.forEach(m => {
     const t = TIPO_PERSONA[m.tipo] || { e: '❔', txt: m.tipo, signo: '' };
     lista += `
@@ -707,7 +708,7 @@ async function verPersona(persona) {
         <span class="emoji">${t.e}</span>
         <div class="det">
           <div class="desc">${m.descripcion || t.txt}</div>
-          <div class="meta">${m.fecha} · ${t.txt}</div>
+          <div class="meta">${fechaCorta(m.fecha)} · ${t.txt}</div>
         </div>
         <span class="monto ${m.tipo === 'Abono' || m.tipo === 'Guardo' ? 'ing' : ''}">${t.signo}${fmt(m.monto)}</span>
         <button class="del pd-del" data-id="${m.id}">✕</button>
@@ -721,7 +722,7 @@ async function verPersona(persona) {
       inv += `
         <div class="pd-mov">
           <span class="emoji">📈</span>
-          <div class="det"><div class="desc">${a.cuenta}</div><div class="meta">${a.fecha}</div></div>
+          <div class="det"><div class="desc">${a.cuenta}</div><div class="meta">${fechaCorta(a.fecha)}</div></div>
           <span class="monto">${a.monto < 0 ? '−' : ''}${fmt(Math.abs(a.monto))}</span>
         </div>`;
     });
