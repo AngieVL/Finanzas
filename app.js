@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 22;
+const APP_VERSION = 23;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -572,7 +572,7 @@ function renderDeudas(st) {
       rows += `
         <div class="deuda-row">
           <div style="flex:1">
-            <div class="quien">👤 ${p}</div>
+            <div class="quien persona-link" data-persona="${p}">👤 ${p} <span class="ver-mas">›</span></div>
             <div class="detalle">prestado ${fmt(d.debe)} · pagado ${fmt(d.abonado)}</div>
           </div>
           <span class="saldo ${d.saldo <= 0 ? 'cero' : ''}">${d.saldo <= 0 ? '✓ a paz' : fmt(d.saldo)}</span>
@@ -609,7 +609,7 @@ function renderDeudas(st) {
       rows += `
         <div class="deuda-row" style="flex-wrap:wrap">
           <div style="flex:1;min-width:55%">
-            <div class="quien">👝 ${p} ${cuentas.length ? '<span class="tag">con inversiones</span>' : ''}</div>
+            <div class="quien persona-link" data-persona="${p}">👝 ${p} <span class="ver-mas">›</span>${cuentas.length ? ' <span class="tag">con inversiones</span>' : ''}</div>
             <div class="detalle">💵 disponible ${fmt(c.efectivo)} · recibido ${fmt(c.recibido)} · entregado ${fmt(c.entregado)}</div>
           </div>
           <span class="saldo custodia ${c.totalReal < 0 ? 'negc' : ''}">${c.totalReal < 0 ? '−' : ''}${fmt(Math.abs(c.totalReal))}</span>
@@ -629,6 +629,9 @@ function renderDeudas(st) {
   }
 
   box.innerHTML = html;
+
+  // tocar el nombre de una persona → su historial completo
+  box.querySelectorAll('.persona-link').forEach(el => el.onclick = () => verPersona(el.dataset.persona));
 
   // eventos: invertir plata ajena y actualizar valores de sus inversiones
   box.querySelectorAll('.cust-invertir').forEach(b => b.onclick = async () => {
@@ -665,6 +668,87 @@ function renderDeudas(st) {
       await refreshState(); renderDeudas(state);
     } catch (e) { toast('Error: ' + e.message); }
   });
+}
+
+// ---------------- desglose de una persona 👤 ----------------
+const TIPO_PERSONA = {
+  'Por cobrar': { e: '🤝', txt: 'le presté', signo: '' },
+  'Abono':      { e: '💰', txt: 'me pagó', signo: '−' },
+  'Guardo':     { e: '👝', txt: 'recibí su plata', signo: '+' },
+  'Entrego':    { e: '📤', txt: 'le entregué/gastó', signo: '−' },
+};
+
+async function verPersona(persona) {
+  toast('Cargando el historial de ' + persona + '...');
+  let d;
+  try { d = await api({ action: 'persona_detalle', persona }); }
+  catch (e) { return toast('Error: ' + e.message); }
+
+  const deu = (state && state.deudas && state.deudas[persona]) || null;
+  const cus = (state && state.custodias && state.custodias[persona]) || null;
+
+  let resumen = '';
+  if (deu && (deu.debe || deu.abonado)) {
+    resumen += `<div class="pd-tot"><span>🤝 Me debe</span><b class="${deu.saldo > 0 ? 'amber' : 'verde'}">${deu.saldo > 0 ? fmt(deu.saldo) : '✓ a paz'}</b></div>`;
+  }
+  if (cus && (cus.recibido || cus.entregado)) {
+    resumen += `<div class="pd-tot"><span>👝 Su plata que guardo</span><b>${fmt(cus.totalReal)}</b></div>`;
+  }
+
+  let lista = '';
+  if (!d.movimientos.length) {
+    lista = '<p class="hint">Sin movimientos registrados con esta persona.</p>';
+  }
+  d.movimientos.forEach(m => {
+    const t = TIPO_PERSONA[m.tipo] || { e: '❔', txt: m.tipo, signo: '' };
+    lista += `
+      <div class="pd-mov">
+        <span class="emoji">${t.e}</span>
+        <div class="det">
+          <div class="desc">${m.descripcion || t.txt}</div>
+          <div class="meta">${m.fecha} · ${t.txt}</div>
+        </div>
+        <span class="monto ${m.tipo === 'Abono' || m.tipo === 'Guardo' ? 'ing' : ''}">${t.signo}${fmt(m.monto)}</span>
+        <button class="del pd-del" data-id="${m.id}">✕</button>
+      </div>`;
+  });
+
+  let inv = '';
+  if (d.aportesInv.length) {
+    inv = '<h4 class="pd-sub">📈 Movimientos a sus inversiones</h4>';
+    d.aportesInv.forEach(a => {
+      inv += `
+        <div class="pd-mov">
+          <span class="emoji">📈</span>
+          <div class="det"><div class="desc">${a.cuenta}</div><div class="meta">${a.fecha}</div></div>
+          <span class="monto">${a.monto < 0 ? '−' : ''}${fmt(Math.abs(a.monto))}</span>
+        </div>`;
+    });
+  }
+
+  const ov = document.createElement('div');
+  ov.className = 'sheet-overlay';
+  ov.innerHTML = `
+    <div class="sheet grande">
+      <h4>👤 ${persona} — historial completo</h4>
+      ${resumen}
+      <div class="pd-lista">${lista}${inv}</div>
+      <button class="pd-cerrar">Cerrar</button>
+    </div>`;
+  ov.onclick = e => { if (e.target === ov) ov.remove(); };
+  ov.querySelector('.pd-cerrar').onclick = () => ov.remove();
+  ov.querySelectorAll('.pd-del').forEach(b => b.onclick = async () => {
+    if (!confirm('¿Eliminar este movimiento?')) return;
+    try {
+      await api({ action: 'delete', id: b.dataset.id });
+      toast('Eliminado');
+      ov.remove();
+      await refreshState();
+      renderDeudas(state);
+      verPersona(persona);
+    } catch (e) { toast('Error: ' + e.message); }
+  });
+  document.body.appendChild(ov);
 }
 
 // ---------------- escanear factura 📷 ----------------

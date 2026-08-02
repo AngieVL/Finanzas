@@ -204,6 +204,7 @@ function handle(req) {
       case 'inv_del':      out = invDel(req.id); break;
       case 'inv_valor':    out = invValor(req.dueno, req.cuenta, req.valor); break;
       case 'persona_limpiar': out = personaLimpiar(req.persona, req.confirmar); break;
+      case 'persona_detalle': out = personaDetalle(req.persona); break;
       case 'ping':         out = { ok: true, pong: true }; break;
       case 'setup':        out = { ok: true, url: setup() }; break;
       default:             out = { ok: false, error: 'Acción desconocida' };
@@ -772,6 +773,34 @@ function invValor(dueno, cuenta, valor) {
   }
   sh.appendRow([dueno, cuenta, valor, hoy]);
   return { ok: true };
+}
+
+// historial completo de movimientos con una persona (para el desglose al tocar su nombre)
+function personaDetalle(persona) {
+  persona = String(persona || '').trim();
+  if (!persona) return { ok: false, error: 'Falta la persona' };
+  var ss = ss_();
+  var shM = ss.getSheetByName('Movimientos');
+  var movimientos = [];
+  if (shM.getLastRow() > 1) {
+    shM.getRange(2, 1, shM.getLastRow() - 1, MOV_HEADERS.length).getValues().forEach(function (r) {
+      if (r[5] === persona && (r[4] === 'POR COBRAR' || r[4] === 'PLATA AJENA')) {
+        movimientos.push({ id: r[0], fecha: fmtDate(r[1]), tipo: r[3], monto: Number(r[6]) || 0, descripcion: r[7] });
+      }
+    });
+  }
+  movimientos.sort(function (a, b) { return a.fecha < b.fecha ? 1 : -1; });
+  var aportes = [];
+  var shI = ss.getSheetByName('Inversiones');
+  if (shI && shI.getLastRow() > 1) {
+    shI.getRange(2, 1, shI.getLastRow() - 1, INV_HEADERS.length).getValues().forEach(function (r) {
+      if (String(r[5] || '') === persona) {
+        aportes.push({ id: r[0], fecha: fmtDate(r[1]), cuenta: r[2], monto: Number(r[3]) || 0 });
+      }
+    });
+    aportes.sort(function (a, b) { return a.fecha < b.fecha ? 1 : -1; });
+  }
+  return { ok: true, persona: persona, movimientos: movimientos, aportesInv: aportes };
 }
 
 // borra TODO el rastro de una persona (deudas, custodia, inversiones ajenas y valores)
