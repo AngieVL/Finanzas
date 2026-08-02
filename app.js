@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 23;
+const APP_VERSION = 24;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -289,6 +289,7 @@ function renderChips() {
       b.textContent = `👤 ${p}${saldo !== 0 ? ' · ' + (esCustodia ? '👝' : '') + fmt(saldo) : ''}`;
       b.className = p === personaSel ? 'sel' : '';
       b.onclick = () => { personaSel = p; renderChips(); };
+      longPress(b, () => verPersona(p)); // mantener presionado → su historial completo
       chips.appendChild(b);
     });
     const otra = document.createElement('button');
