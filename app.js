@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 25;
+const APP_VERSION = 26;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -436,7 +436,8 @@ async function renderResumen() {
       const usado = tot[p.categoria] || 0;
       if (!usado && !p.mensual) return;
       const pct = p.mensual > 0 ? usado / p.mensual : (usado > 0 ? 1.01 : 0);
-      const cls = pct >= 1 ? 'over' : pct >= 0.8 ? 'warn' : '';
+      // rojo SOLO si se pasó de verdad; llegar justo al 100% es cumplir el presupuesto ✓
+      const cls = pct > 1 ? 'over' : (pct >= 0.8 && pct < 1) ? 'warn' : '';
       rows += `
         <div class="cat-row">
           <div class="info">
@@ -550,7 +551,7 @@ async function renderResumen() {
   // banner si hay categorías pasadas (solo mes actual); las provisiones se miden por su alcancía
   if (mesVista === hoyMes()) {
     const pasadas = (st.presupuesto || [])
-      .filter(p => p.grupo !== 'PROVISIONES' && p.grupo !== 'INGRESOS' && p.mensual > 0 && (tot[p.categoria] || 0) >= p.mensual)
+      .filter(p => p.grupo !== 'PROVISIONES' && p.grupo !== 'INGRESOS' && p.mensual > 0 && (tot[p.categoria] || 0) > p.mensual)
       .map(p => p.categoria);
     Object.keys(alc).forEach(c => { if (alc[c].disponible < 0) pasadas.push(c.replace('Provisión ', '') + ' (alcancía en negativo)'); });
     if (pasadas.length) showBanner(`🚨 Ojo con: ${pasadas.join(', ')}`, true);
