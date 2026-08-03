@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 26;
+const APP_VERSION = 27;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -437,7 +437,8 @@ async function renderResumen() {
       if (!usado && !p.mensual) return;
       const pct = p.mensual > 0 ? usado / p.mensual : (usado > 0 ? 1.01 : 0);
       // rojo SOLO si se pasó de verdad; llegar justo al 100% es cumplir el presupuesto ✓
-      const cls = pct > 1 ? 'over' : (pct >= 0.8 && pct < 1) ? 'warn' : '';
+      // en GASTOS fijos no hay amarillo: son facturas que siempre rondan el 100% (solo verde o rojo)
+      const cls = pct > 1 ? 'over' : (g !== 'GASTOS' && pct >= 0.8 && pct < 1) ? 'warn' : '';
       rows += `
         <div class="cat-row">
           <div class="info">

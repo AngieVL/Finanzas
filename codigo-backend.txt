@@ -475,7 +475,7 @@ function addMovimiento(req) {
       // pasarse es gastar MÁS de lo presupuestado; llegar justo al 100% es cumplirlo
       if (pct > 1) alerta = '🚨 Te pasaste del presupuesto de ' + req.categoria + ': llevas ' + fmtCOP(usado) + ' de ' + fmtCOP(p.mensual);
       else if (pct === 1) alerta = '🎯 Presupuesto de ' + req.categoria + ' completo: usaste justo lo planeado ✓';
-      else if (pct >= 0.8) alerta = '⚠️ Vas en ' + Math.round(pct * 100) + '% del presupuesto de ' + req.categoria + ' (' + fmtCOP(usado) + ' de ' + fmtCOP(p.mensual) + ')';
+      else if (pct >= 0.8 && p.grupo !== 'GASTOS') alerta = '⚠️ Vas en ' + Math.round(pct * 100) + '% del presupuesto de ' + req.categoria + ' (' + fmtCOP(usado) + ' de ' + fmtCOP(p.mensual) + ')';
     }
   }
   return { ok: true, id: id, alerta: alerta };
@@ -1270,7 +1270,7 @@ function dailyCheck() {
       if (p.grupo === 'INGRESOS' || p.grupo === 'PROVISIONES' || p.mensual <= 0) return;
       var pct = (st.totales[p.categoria] || 0) / p.mensual;
       if (pct > 1) pasadas.push(p.categoria);            // pasarse = gastar MÁS del presupuesto
-      else if (pct >= 0.8) cerca.push(p.categoria);      // al límite justo o cerca
+      else if (pct >= 0.8 && p.grupo !== 'GASTOS') cerca.push(p.categoria); // sin avisos amarillos para gastos fijos
     });
     for (var cat in st.alcancias) {
       if (st.alcancias[cat].disponible < 0) pasadas.push(cat.replace('Provisión ', '') + ' (alcancía)');
