@@ -475,6 +475,16 @@ body.dark .vj-detalle { border-top-color: #322a49; }
 .vj-acciones { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .deuda-row .saldo.debo { color: var(--red); }
 
+/* ---------- cruce de cuentas 🔀 ---------- */
+.sheet .cruzar-btn, .cruzar-btn {
+  width: 100%; margin: 0 0 10px; padding: 11px;
+  border: none; border-radius: 12px; cursor: pointer;
+  background: var(--violet-light); color: var(--violet-dark);
+  font-size: 13.5px; font-weight: 700;
+}
+body.dark .sheet .cruzar-btn, body.dark .cruzar-btn { background: #322a49; color: #cbbdf5; }
+.pd-nota { display: block; font-size: 11px; color: var(--muted); font-weight: 400; }
+
 /* ---------- condonar 🕊️ ---------- */
 .sheet .condonar-btn, .condonar-btn {
   width: 100%; margin: 0 0 10px; padding: 11px;

@@ -212,6 +212,7 @@ function handle(req) {
       case 'persona_limpiar': out = personaLimpiar(req.persona, req.confirmar); break;
       case 'persona_detalle': out = personaDetalle(req.persona); break;
       case 'condonar':     out = condonarDeuda(req.persona, req.monto, req.direccion, req.nota); break;
+      case 'cruzar':       out = cruzarCuentas(req.persona, req.monto, req.direccion); break;
       case 'viajes_get':   out = viajesGet(); break;
       case 'viaje_add':    out = viajeAdd(req.nombre, req.participantes); break;
       case 'viaje_del':    out = viajeDel(req.id); break;
@@ -831,6 +832,42 @@ function condonarDeuda(persona, monto, direccion, nota) {
   addMovimiento({ tipo: 'Abono', grupo: 'POR COBRAR', categoria: persona, monto: monto,
                   descripcion: '🕊️ Deuda condonada' + extra });
   return { ok: true, direccion: direccion, monto: monto, categoria: CAT_CONDONADAS };
+}
+
+// ============================== CRUCE DE CUENTAS 🔀 ==============================
+// Salda una deuda usando la plata que le guardas a esa persona (sin transferencias).
+// 'me_deben': te cobras de SU plata guardada → su deuda baja y su fondo baja.
+// 'yo_debo':  le pagas sumándolo a SU plata guardada → tu deuda baja y su fondo sube.
+function cruzarCuentas(persona, monto, direccion) {
+  persona = String(persona || '').trim();
+  monto = Math.round(Number(monto));
+  if (!persona || !monto || monto <= 0) return { ok: false, error: 'Falta la persona o el monto' };
+  var st = getState();
+  var cus = st.custodias[persona];
+  direccion = direccion === 'yo_debo' ? 'yo_debo' : 'me_deben';
+
+  if (direccion === 'me_deben') {
+    var deuda = (st.deudas[persona] || {}).saldo || 0;
+    if (monto > deuda) return { ok: false, error: 'Esa persona solo te debe ' + fmtCOP(deuda) };
+    var disponible = cus ? cus.efectivo : 0;
+    if (monto > disponible) return { ok: false, error: 'Su plata disponible es ' + fmtCOP(disponible) + ' (lo demás está invertido)' };
+    addMovimiento({ tipo: 'Abono', grupo: 'POR COBRAR', categoria: persona, monto: monto,
+                    descripcion: '🔀 Cruce: me cobré de su plata guardada' });
+    addMovimiento({ tipo: 'Entrego', grupo: 'PLATA AJENA', categoria: persona, monto: monto,
+                    descripcion: '🔀 Cruce: cubrió lo que me debía' });
+  } else {
+    var mia = (st.misDeudas[persona] || {}).saldo || 0;
+    if (monto > mia) return { ok: false, error: 'Solo le debes ' + fmtCOP(mia) };
+    addMovimiento({ tipo: 'Le pagué', grupo: 'YO DEBO', categoria: persona, monto: monto,
+                    descripcion: '🔀 Cruce: se lo sumé a su plata guardada' });
+    addMovimiento({ tipo: 'Guardo', grupo: 'PLATA AJENA', categoria: persona, monto: monto,
+                    descripcion: '🔀 Cruce: pago de lo que yo le debía' });
+  }
+  var st2 = getState();
+  return { ok: true, monto: monto, direccion: direccion,
+           deuda: (st2.deudas[persona] || {}).saldo || 0,
+           miDeuda: (st2.misDeudas[persona] || {}).saldo || 0,
+           fondo: st2.custodias[persona] ? st2.custodias[persona].totalReal : 0 };
 }
 
 // ============================== VIAJES COMPARTIDOS ✈️ ==============================

@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 28;
+const APP_VERSION = 29;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -744,7 +744,18 @@ async function verPersona(persona) {
       ${mia.saldo > 0 ? `<button class="condonar-btn" data-dir="yo_debo" data-monto="${mia.saldo}">🕊️ Me la condonó (ya no la debo)</button>` : ''}`;
   }
   if (cus && (cus.recibido || cus.entregado)) {
-    resumen += `<div class="pd-tot"><span>👝 Su plata que guardo</span><b>${fmt(cus.totalReal)}</b></div>`;
+    resumen += `<div class="pd-tot"><span>👝 Su plata que guardo</span><b>${fmt(cus.totalReal)}</b>${
+      cus.efectivo !== cus.totalReal ? `<small class="pd-nota">disponible ${fmt(cus.efectivo)}</small>` : ''}</div>`;
+  }
+  // 🔀 cruce de cuentas: saldar deudas con la plata que le guardo (sin transferencias)
+  if (cus) {
+    if (deu && deu.saldo > 0 && cus.efectivo > 0) {
+      const puede = Math.min(deu.saldo, cus.efectivo);
+      resumen += `<button class="cruzar-btn" data-dir="me_deben" data-monto="${puede}">🔀 Cobrarme ${fmt(puede)} de su plata guardada</button>`;
+    }
+    if (mia && mia.saldo > 0) {
+      resumen += `<button class="cruzar-btn" data-dir="yo_debo" data-monto="${mia.saldo}">🔀 Pagarle ${fmt(mia.saldo)} sumándolo a su plata</button>`;
+    }
   }
 
   let lista = '';
@@ -790,6 +801,26 @@ async function verPersona(persona) {
     </div>`;
   ov.onclick = e => { if (e.target === ov) ov.remove(); };
   ov.querySelector('.pd-cerrar').onclick = () => ov.remove();
+  ov.querySelectorAll('.cruzar-btn').forEach(b => b.onclick = async () => {
+    const dir = b.dataset.dir;
+    const sugerido = Number(b.dataset.monto);
+    const v = prompt(
+      dir === 'me_deben'
+        ? `🔀 Cruce de cuentas con ${persona}\n\nEn vez de que te transfiera, te cobras de la plata suya que guardas.\n\n¿Cuánto quieres cruzar?`
+        : `🔀 Cruce de cuentas con ${persona}\n\nLe pagas lo que le debes sumándolo a la plata suya que guardas.\n\n¿Cuánto quieres cruzar?`,
+      String(sugerido));
+    if (v === null) return;
+    const monto = parseInt(v.replace(/\D/g, ''), 10);
+    if (!monto) return toast('Escribe un monto');
+    try {
+      const r = await api({ action: 'cruzar', persona, monto, direccion: dir });
+      toast(`🔀 Cruzado ${fmt(monto)} · ${dir === 'me_deben' ? `queda debiendo ${fmt(r.deuda)}` : `le debes ${fmt(r.miDeuda)}`} · su plata: ${fmt(r.fondo)}`);
+      ov.remove();
+      await refreshState();
+      renderDeudas(state);
+      renderChips();
+    } catch (e) { toast('Error: ' + e.message); }
+  });
   ov.querySelectorAll('.condonar-btn').forEach(b => b.onclick = async () => {
     const dir = b.dataset.dir;
     const saldo = Number(b.dataset.monto);
