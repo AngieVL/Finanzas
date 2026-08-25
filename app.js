@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 27;
+const APP_VERSION = 28;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -250,7 +250,9 @@ function renderChips() {
     // acción: préstamos (mi plata) o custodia (su plata que yo guardo)
     const acciones = document.createElement('div');
     acciones.className = 'tipo-toggle acciones-personas';
-    [['deuda', '🤝 Presté'], ['abono', '💰 Me pagó'], ['guardo', '👝 Recibí su plata'], ['entrego', '📤 Le entregué / gastó']].forEach(([val, lbl]) => {
+    [['deuda', '🤝 Presté'], ['abono', '💰 Me pagó'],
+     ['medebo', '💸 Me prestaron'], ['pague', '✅ Le pagué'],
+     ['guardo', '👝 Recibí su plata'], ['entrego', '📤 Le entregué / gastó']].forEach(([val, lbl]) => {
       const b = document.createElement('button');
       b.textContent = lbl;
       b.className = accionDeuda === val ? 'active' : '';
@@ -265,6 +267,8 @@ function renderChips() {
     pista.textContent = {
       deuda: 'Prestaste TU plata: te la deben.',
       abono: 'Te devolvieron plata que habías prestado.',
+      medebo: 'Alguien te prestó a TI: quedas debiendo.',
+      pague: 'Le devolviste plata que te habían prestado.',
       guardo: 'Entró plata DE OTRA persona a tus cuentas (tú se la guardas).',
       entrego: 'Le diste o gastó de SU plata guardada (transferencia, compra con tu tarjeta...).',
     }[accionDeuda];
@@ -280,13 +284,17 @@ function renderChips() {
     chips.style.width = '100%';
     const personas = new Set((prefs.personas || []));
     Object.keys((state && state.deudas) || {}).forEach(p => personas.add(p));
+    Object.keys((state && state.misDeudas) || {}).forEach(p => personas.add(p));
     Object.keys((state && state.custodias) || {}).forEach(p => personas.add(p));
     personas.forEach(p => {
       const b = document.createElement('button');
       const esCustodia = accionDeuda === 'guardo' || accionDeuda === 'entrego';
-      const fuente = esCustodia ? (state && state.custodias) : (state && state.deudas);
+      const esMia = accionDeuda === 'medebo' || accionDeuda === 'pague';
+      const fuente = esCustodia ? (state && state.custodias)
+                   : esMia ? (state && state.misDeudas)
+                   : (state && state.deudas);
       const saldo = fuente && fuente[p] ? fuente[p].saldo : 0;
-      b.textContent = `👤 ${p}${saldo !== 0 ? ' · ' + (esCustodia ? '👝' : '') + fmt(saldo) : ''}`;
+      b.textContent = `👤 ${p}${saldo !== 0 ? ' · ' + (esCustodia ? '👝' : esMia ? '💸' : '') + fmt(saldo) : ''}`;
       b.className = p === personaSel ? 'sel' : '';
       b.onclick = () => { personaSel = p; renderChips(); };
       longPress(b, () => verPersona(p)); // mantener presionado → su historial completo
@@ -328,14 +336,17 @@ async function guardar() {
   let tipo = tipoSel, categoria, grupo;
   if (tipoSel === 'Por cobrar') {
     if (!personaSel) return toast('Elige quién 👤');
-    tipo = { deuda: 'Por cobrar', abono: 'Abono', guardo: 'Guardo', entrego: 'Entrego' }[accionDeuda];
+    tipo = { deuda: 'Por cobrar', abono: 'Abono', medebo: 'Me prestaron', pague: 'Le pagué',
+             guardo: 'Guardo', entrego: 'Entrego' }[accionDeuda];
     categoria = personaSel;
     // recordar a esta persona para las próximas veces
     if (!(prefs.personas || []).includes(personaSel)) {
       prefs.personas = (prefs.personas || []).concat(personaSel).slice(-15);
       savePrefs();
     }
-    grupo = (accionDeuda === 'guardo' || accionDeuda === 'entrego') ? 'PLATA AJENA' : 'POR COBRAR';
+    grupo = (accionDeuda === 'guardo' || accionDeuda === 'entrego') ? 'PLATA AJENA'
+          : (accionDeuda === 'medebo' || accionDeuda === 'pague') ? 'YO DEBO'
+          : 'POR COBRAR';
   } else {
     categoria = catSel || clasificar(p.desc, tipo);
     grupo = grupoDe(categoria, tipo);
@@ -438,7 +449,10 @@ async function renderResumen() {
       const pct = p.mensual > 0 ? usado / p.mensual : (usado > 0 ? 1.01 : 0);
       // rojo SOLO si se pasó de verdad; llegar justo al 100% es cumplir el presupuesto ✓
       // en GASTOS fijos no hay amarillo: son facturas que siempre rondan el 100% (solo verde o rojo)
-      const cls = pct > 1 ? 'over' : (g !== 'GASTOS' && pct >= 0.8 && pct < 1) ? 'warn' : '';
+      // sin presupuesto definido no hay de qué pasarse → color neutro, nunca rojo
+      const cls = p.mensual === 0 ? 'neutral'
+                : pct > 1 ? 'over'
+                : (g !== 'GASTOS' && pct >= 0.8 && pct < 1) ? 'warn' : '';
       rows += `
         <div class="cat-row">
           <div class="info">
@@ -588,6 +602,31 @@ function renderDeudas(st) {
       </div>`;
   }
 
+  // 💸 lo que YO debo
+  const mias = (st && st.misDeudas) || {};
+  const aQuienes = Object.keys(mias).filter(p => mias[p].prestado > 0 || mias[p].pagado > 0);
+  if (aQuienes.length) {
+    aQuienes.sort((a, b) => mias[b].saldo - mias[a].saldo);
+    const totalM = aQuienes.reduce((s, p) => s + Math.max(mias[p].saldo, 0), 0);
+    let rows = '';
+    aQuienes.forEach(p => {
+      const d = mias[p];
+      rows += `
+        <div class="deuda-row">
+          <div style="flex:1">
+            <div class="quien persona-link" data-persona="${p}">👤 ${p} <span class="ver-mas">›</span></div>
+            <div class="detalle">me prestó ${fmt(d.prestado)} · le he pagado ${fmt(d.pagado)}</div>
+          </div>
+          <span class="saldo ${d.saldo <= 0 ? 'cero' : 'debo'}">${d.saldo <= 0 ? '✓ a paz' : fmt(d.saldo)}</span>
+        </div>`;
+    });
+    html += `
+      <div class="grupo-card">
+        <h4><span>💸 YO DEBO</span><span>${fmt(totalM)}</span></h4>
+        ${rows}
+      </div>`;
+  }
+
   // 👝 custodia: plata de OTROS que vive en mis cuentas (con sus inversiones y ganancias)
   const cust = (st && st.custodias) || {};
   const dueños = Object.keys(cust).filter(p => cust[p].recibido > 0 || cust[p].entregado > 0 || (cust[p].cuentas || []).length);
@@ -675,10 +714,12 @@ function renderDeudas(st) {
 
 // ---------------- desglose de una persona 👤 ----------------
 const TIPO_PERSONA = {
-  'Por cobrar': { e: '🤝', txt: 'le presté', signo: '' },
-  'Abono':      { e: '💰', txt: 'me pagó', signo: '−' },
-  'Guardo':     { e: '👝', txt: 'recibí su plata', signo: '+' },
-  'Entrego':    { e: '📤', txt: 'le entregué/gastó', signo: '−' },
+  'Por cobrar':  { e: '🤝', txt: 'le presté', signo: '' },
+  'Abono':       { e: '💰', txt: 'me pagó', signo: '−' },
+  'Me prestaron':{ e: '💸', txt: 'me prestó', signo: '' },
+  'Le pagué':    { e: '✅', txt: 'le pagué', signo: '−' },
+  'Guardo':      { e: '👝', txt: 'recibí su plata', signo: '+' },
+  'Entrego':     { e: '📤', txt: 'le entregué/gastó', signo: '−' },
 };
 
 async function verPersona(persona) {
@@ -688,11 +729,19 @@ async function verPersona(persona) {
   catch (e) { return toast('Error: ' + e.message); }
 
   const deu = (state && state.deudas && state.deudas[persona]) || null;
+  const mia = (state && state.misDeudas && state.misDeudas[persona]) || null;
   const cus = (state && state.custodias && state.custodias[persona]) || null;
 
   let resumen = '';
   if (deu && (deu.debe || deu.abonado)) {
-    resumen += `<div class="pd-tot"><span>🤝 Me debe</span><b class="${deu.saldo > 0 ? 'amber' : 'verde'}">${deu.saldo > 0 ? fmt(deu.saldo) : '✓ a paz'}</b></div>`;
+    resumen += `
+      <div class="pd-tot"><span>🤝 Me debe</span><b class="${deu.saldo > 0 ? 'amber' : 'verde'}">${deu.saldo > 0 ? fmt(deu.saldo) : '✓ a paz'}</b></div>
+      ${deu.saldo > 0 ? `<button class="condonar-btn" data-dir="me_deben" data-monto="${deu.saldo}">🕊️ Condonar (perdonarle la deuda)</button>` : ''}`;
+  }
+  if (mia && (mia.prestado || mia.pagado)) {
+    resumen += `
+      <div class="pd-tot"><span>💸 Le debo</span><b class="${mia.saldo > 0 ? 'amber' : 'verde'}">${mia.saldo > 0 ? fmt(mia.saldo) : '✓ a paz'}</b></div>
+      ${mia.saldo > 0 ? `<button class="condonar-btn" data-dir="yo_debo" data-monto="${mia.saldo}">🕊️ Me la condonó (ya no la debo)</button>` : ''}`;
   }
   if (cus && (cus.recibido || cus.entregado)) {
     resumen += `<div class="pd-tot"><span>👝 Su plata que guardo</span><b>${fmt(cus.totalReal)}</b></div>`;
@@ -741,6 +790,27 @@ async function verPersona(persona) {
     </div>`;
   ov.onclick = e => { if (e.target === ov) ov.remove(); };
   ov.querySelector('.pd-cerrar').onclick = () => ov.remove();
+  ov.querySelectorAll('.condonar-btn').forEach(b => b.onclick = async () => {
+    const dir = b.dataset.dir;
+    const saldo = Number(b.dataset.monto);
+    const v = prompt(
+      dir === 'me_deben'
+        ? `🕊️ ¿Cuánto de la deuda de ${persona} le vas a perdonar?\n\nEsa plata pasará a ser un gasto tuyo en "Deudas condonadas".`
+        : `🕊️ ¿Cuánto de lo que le debes a ${persona} te condonó?\n\nSolo se salda tu deuda (no cuenta como ingreso).`,
+      String(saldo));
+    if (v === null) return;
+    const monto = parseInt(v.replace(/\D/g, ''), 10);
+    if (!monto) return toast('Escribe un monto');
+    const nota = prompt('¿Alguna nota? (opcional)', '') || '';
+    try {
+      await api({ action: 'condonar', persona, monto, direccion: dir, nota });
+      toast(dir === 'me_deben' ? `🕊️ Deuda condonada: ${fmt(monto)}` : `🕊️ ¡Te la perdonaron! ${fmt(monto)} menos`);
+      ov.remove();
+      await refreshState();
+      renderDeudas(state);
+      renderChips();
+    } catch (e) { toast('Error: ' + e.message); }
+  });
   ov.querySelectorAll('.pd-del').forEach(b => b.onclick = async () => {
     if (!confirm('¿Eliminar este movimiento?')) return;
     try {
@@ -871,12 +941,13 @@ function renderResTab(tab) {
   rtabActivo = tab;
   document.querySelectorAll('#res-tabs button').forEach(b =>
     b.classList.toggle('active', b.dataset.rtab === tab));
-  ['mes', 'tend', 'patri', 'metas'].forEach(t =>
+  ['mes', 'tend', 'patri', 'metas', 'viajes'].forEach(t =>
     $('rtab-' + t).classList.toggle('hidden', t !== tab));
   if (tab === 'mes') renderResumen();
   if (tab === 'tend') renderTendencias();
   if (tab === 'patri') { patriItems = null; renderPatrimonio(); }
   if (tab === 'metas') renderMetas();
+  if (tab === 'viajes') renderViajes();
 }
 
 function moverMes(delta) {
@@ -1252,6 +1323,182 @@ async function renderMetas() {
   };
 }
 
+// ---------------- viajes compartidos ✈️ ----------------
+let viajeAbierto = null; // id del viaje cuyo detalle está desplegado
+
+async function renderViajes() {
+  const box = $('rtab-viajes');
+  box.innerHTML = '<div class="card">Cargando... ✈️</div>';
+  let r;
+  try { r = await api({ action: 'viajes_get' }); }
+  catch (e) { box.innerHTML = `<div class="card">Sin conexión: ${e.message}</div>`; return; }
+  const viajes = r.viajes || [];
+  let html = '';
+
+  if (!viajes.length) {
+    html += `<div class="card"><p class="hint">Aquí llevas las cuentas de un viaje o salida donde varios ponen plata ✈️<br><br>
+      Creas el viaje, anotas cada gasto con <b>quién pagó</b>, y la app te dice al final quién le debe a quién. Nada de esto toca tu presupuesto hasta que cierres el viaje.</p></div>`;
+  }
+
+  viajes.forEach(v => {
+    const abierto = viajeAbierto === v.id;
+    const cerrado = v.estado === 'cerrado';
+    // resumen de quién debe a quién
+    let liq = '';
+    if (v.liquidacion.length) {
+      v.liquidacion.forEach(t => {
+        const yoRecibo = t.a === 'Yo';
+        liq += `<div class="vj-liq ${yoRecibo ? 'pos' : 'neg'}">${yoRecibo
+          ? `🤝 <b>${t.de}</b> te debe <b>${fmt(t.monto)}</b>`
+          : `💸 Le debes <b>${fmt(t.monto)}</b> a <b>${t.a}</b>`}</div>`;
+      });
+    } else if (v.total > 0) {
+      liq = '<div class="vj-liq pos">✅ ¡Todo cuadrado! Nadie le debe a nadie</div>';
+    }
+
+    let detalle = '';
+    if (abierto) {
+      let gastos = '';
+      v.gastos.forEach(g => {
+        const soloUno = g.entre.length === 1;
+        gastos += `
+          <div class="pd-mov">
+            <span class="emoji">${g.pago === 'Yo' ? '💜' : '👤'}</span>
+            <div class="det">
+              <div class="desc">${g.descripcion || 'gasto'}</div>
+              <div class="meta">pagó ${g.pago}${soloUno ? ` · solo ${g.entre[0]}` : ` · entre ${g.entre.length}`}</div>
+            </div>
+            <span class="monto">${fmt(g.monto)}</span>
+            <button class="del vj-gasto-del" data-id="${g.id}">✕</button>
+          </div>`;
+      });
+      if (!v.gastos.length) gastos = '<p class="hint">Aún no hay gastos en este viaje.</p>';
+
+      const opcionesEntre = [`<option value="TODOS">entre todos</option>`]
+        .concat(v.participantes.map(p => `<option value="${p}">solo ${p}</option>`)).join('');
+      const opcionesPago = v.participantes.map(p => `<option value="${p}">pagó ${p}</option>`).join('');
+
+      detalle = `
+        <div class="vj-detalle">
+          ${gastos}
+          ${cerrado ? '' : `
+          <div class="vj-form">
+            <input type="text" class="vj-desc" placeholder="¿Qué fue? Ej: almuerzo">
+            <input type="text" inputmode="numeric" class="vj-monto" placeholder="Monto">
+            <select class="vj-pago">${opcionesPago}</select>
+            <select class="vj-entre">${opcionesEntre}</select>
+            <button class="primary vj-add" data-id="${v.id}">+ Agregar gasto</button>
+          </div>
+          <div class="vj-acciones">
+            <button class="chip-btn vj-cerrar" data-id="${v.id}">🏁 Cerrar y liquidar</button>
+            <button class="chip-btn vj-del" data-id="${v.id}">🗑️ Eliminar viaje</button>
+          </div>`}
+        </div>`;
+    }
+
+    html += `
+      <div class="card vj-card ${cerrado ? 'cerrado' : ''}">
+        <div class="vj-head" data-id="${v.id}">
+          <div>
+            <h3>✈️ ${v.nombre} ${cerrado ? '<span class="tag">cerrado</span>' : ''}</h3>
+            <div class="hint">${v.participantes.join(' · ')} · total ${fmt(v.total)}</div>
+          </div>
+          <span class="vj-flecha">${abierto ? '▲' : '▼'}</span>
+        </div>
+        ${liq}
+        <div class="hint" style="margin-top:6px">Tu parte: <b>${fmt(v.miParte)}</b> · pusiste ${fmt(v.miPago)}</div>
+        ${detalle}
+      </div>`;
+  });
+
+  html += `
+    <div class="card">
+      <h3>➕ Nuevo viaje o salida</h3>
+      <label>¿Cómo se llama?</label>
+      <input id="vj-nombre" type="text" placeholder="Ej: Fin de semana en Guatapé">
+      <label>¿Con quién? (separa por comas)</label>
+      <input id="vj-personas" type="text" placeholder="Ej: David, Migue">
+      <button id="vj-crear" class="primary" style="width:100%">Crear viaje ✈️</button>
+    </div>`;
+
+  box.innerHTML = html;
+
+  // abrir/cerrar detalle
+  box.querySelectorAll('.vj-head').forEach(el => el.onclick = () => {
+    viajeAbierto = viajeAbierto === el.dataset.id ? null : el.dataset.id;
+    renderViajes();
+  });
+
+  // agregar gasto
+  box.querySelectorAll('.vj-add').forEach(b => b.onclick = async () => {
+    const cont = b.closest('.vj-form');
+    const desc = cont.querySelector('.vj-desc').value.trim();
+    const monto = parseInt((cont.querySelector('.vj-monto').value || '').replace(/\D/g, ''), 10) || 0;
+    const pago = cont.querySelector('.vj-pago').value;
+    const entreSel = cont.querySelector('.vj-entre').value;
+    if (!monto) return toast('Escribe el monto');
+    const v = viajes.find(x => x.id === b.dataset.id);
+    const entre = entreSel === 'TODOS' ? v.participantes : [entreSel];
+    try {
+      await api({ action: 'viaje_gasto_add', viajeId: b.dataset.id, descripcion: desc, monto, pago, entre });
+      toast(`✓ ${fmt(monto)} · pagó ${pago}`);
+      renderViajes();
+    } catch (e) { toast('Error: ' + e.message); }
+  });
+
+  box.querySelectorAll('.vj-gasto-del').forEach(b => b.onclick = async () => {
+    if (!confirm('¿Eliminar este gasto del viaje?')) return;
+    try { await api({ action: 'viaje_gasto_del', id: b.dataset.id }); renderViajes(); }
+    catch (e) { toast('Error: ' + e.message); }
+  });
+
+  box.querySelectorAll('.vj-del').forEach(b => b.onclick = async () => {
+    if (!confirm('¿Eliminar este viaje y todos sus gastos?')) return;
+    try { await api({ action: 'viaje_del', id: b.dataset.id }); viajeAbierto = null; toast('Viaje eliminado'); renderViajes(); }
+    catch (e) { toast('Error: ' + e.message); }
+  });
+
+  // cerrar y liquidar
+  box.querySelectorAll('.vj-cerrar').forEach(b => b.onclick = () => {
+    const v = viajes.find(x => x.id === b.dataset.id);
+    const resumen = v.liquidacion.map(t => t.a === 'Yo' ? `${t.de} te debe ${fmt(t.monto)}` : `le debes ${fmt(t.monto)} a ${t.a}`).join(' · ') || 'todo cuadrado';
+    actionSheet(`🏁 Cerrar "${v.nombre}" — ${resumen}`, [
+      { label: `✅ Registrar todo (mi parte ${fmt(v.miParte)} + las deudas)`, fn: () => cerrarViaje(v, true, true) },
+      { label: '💸 Solo registrar mi parte como gasto', fn: () => cerrarViaje(v, true, false) },
+      { label: '🤝 Solo registrar las deudas', fn: () => cerrarViaje(v, false, true) },
+      { label: '🏁 Solo cerrarlo (ya nos arreglamos)', fn: () => cerrarViaje(v, false, false) },
+    ]);
+  });
+
+  $('vj-crear').onclick = async () => {
+    const nombre = $('vj-nombre').value.trim();
+    const personas = $('vj-personas').value.trim();
+    if (!nombre) return toast('Ponle nombre al viaje');
+    if (!personas) return toast('¿Con quién vas? Escribe al menos una persona');
+    try {
+      const res = await api({ action: 'viaje_add', nombre, participantes: personas });
+      toast('✈️ ¡Viaje creado!');
+      viajeAbierto = res.id;
+      renderViajes();
+    } catch (e) { toast('Error: ' + e.message); }
+  };
+}
+
+async function cerrarViaje(v, registrarGasto, registrarDeuda) {
+  let categoria = 'Provisión Viajes';
+  if (registrarGasto) {
+    const cats = getCats('Gasto');
+    if (!cats.some(c => c.c === categoria)) categoria = (cats.find(c => /viaje/i.test(c.c)) || { c: 'Otros' }).c;
+  }
+  try {
+    const r = await api({ action: 'viaje_cerrar', viajeId: v.id, registrarGasto, registrarDeuda, categoria });
+    toast(r.hechos.length ? '✓ ' + r.hechos.join(' · ') : '🏁 Viaje cerrado');
+    viajeAbierto = null;
+    await refreshState();
+    renderViajes();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
 // ---------------- movimientos ----------------
 async function renderMovs() {
   const st = await refreshState();
@@ -1260,7 +1507,7 @@ async function renderMovs() {
     !q || (m.descripcion || '').toLowerCase().includes(q) || (m.categoria || '').toLowerCase().includes(q));
   $('movs-lista').innerHTML = list.slice(0, 100).map(m => `
     <div class="mov">
-      <span class="emoji">${{ 'Ingreso': '💰', 'Por cobrar': '🤝', 'Abono': '💵', 'Guardo': '👝', 'Entrego': '📤', 'Reembolso': '🔄' }[m.tipo] || emoji(m.categoria)}</span>
+      <span class="emoji">${{ 'Ingreso': '💰', 'Por cobrar': '🤝', 'Abono': '💵', 'Me prestaron': '💸', 'Le pagué': '✅', 'Guardo': '👝', 'Entrego': '📤', 'Reembolso': '🔄' }[m.tipo] || emoji(m.categoria)}</span>
       <div class="det">
         <div class="desc">${m.descripcion || m.categoria}</div>
         <div class="meta">${m.fecha} · ${m.categoria}</div>

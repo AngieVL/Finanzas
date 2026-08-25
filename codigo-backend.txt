@@ -42,6 +42,9 @@ var REC_HEADERS = ['ID', 'Nombre', 'Día del mes', 'Monto aprox', 'Activo'];
 var META_HEADERS = ['ID', 'Nombre', 'Objetivo', 'Fecha límite', 'Ahorrado'];
 var INV_HEADERS = ['ID', 'Fecha', 'Cuenta', 'Monto', 'Nota', 'Dueño'];
 var VAL_HEADERS = ['Dueño', 'Cuenta', 'Valor', 'Actualizado'];
+var VIAJE_HEADERS = ['ID', 'Nombre', 'Fecha', 'Estado', 'Participantes'];
+var VGASTO_HEADERS = ['ID', 'ViajeID', 'Fecha', 'Descripción', 'Monto', 'Pagó', 'Entre'];
+var CAT_CONDONADAS = 'Deudas condonadas';
 
 // ============================== SETUP (ejecutar 1 vez) ==============================
 function setup() {
@@ -107,6 +110,8 @@ function setup() {
   invSheet_().getRange(1, 6).setValue('Dueño')
     .setFontWeight('bold').setBackground('#7c5cbf').setFontColor('white');
   valoresSheet_();
+  viajesSheet_();
+  vgastosSheet_();
 
   // --- Trigger diario de alertas (7am) ---
   var exists = ScriptApp.getProjectTriggers().some(function (t) {
@@ -193,6 +198,7 @@ function handle(req) {
       case 'set_discreto': out = setDiscreto(req.on); break;
       case 'set_dia_abono': out = setDiaAbono(req.dia); break;
       case 'test_whatsapp': out = testWhatsapp(); break;
+      case 'tg_setup':     out = tgSetup(req.token); break;
       case 'tendencias':   out = getTendencias(); break;
       case 'patrimonio_get':  out = patrimonioGet(); break;
       case 'patrimonio_save': out = patrimonioSave(req.mes, req.items); break;
@@ -205,6 +211,13 @@ function handle(req) {
       case 'inv_valor':    out = invValor(req.dueno, req.cuenta, req.valor); break;
       case 'persona_limpiar': out = personaLimpiar(req.persona, req.confirmar); break;
       case 'persona_detalle': out = personaDetalle(req.persona); break;
+      case 'condonar':     out = condonarDeuda(req.persona, req.monto, req.direccion, req.nota); break;
+      case 'viajes_get':   out = viajesGet(); break;
+      case 'viaje_add':    out = viajeAdd(req.nombre, req.participantes); break;
+      case 'viaje_del':    out = viajeDel(req.id); break;
+      case 'viaje_gasto_add': out = viajeGastoAdd(req); break;
+      case 'viaje_gasto_del': out = viajeGastoDel(req.id); break;
+      case 'viaje_cerrar': out = viajeCerrar(req); break;
       case 'ping':         out = { ok: true, pong: true }; break;
       case 'setup':        out = { ok: true, url: setup() }; break;
       default:             out = { ok: false, error: 'Acción desconocida' };
@@ -341,6 +354,17 @@ function getState(mes) {
   });
   for (var p in deudas) deudas[p].saldo = deudas[p].debe - deudas[p].abonado;
 
+  // 💸 lo que YO debo a otros (me prestaron)
+  var misDeudas = {};
+  movs.forEach(function (m) {
+    if (m.grupo !== 'YO DEBO') return;
+    var p = m.categoria || 'Alguien';
+    if (!misDeudas[p]) misDeudas[p] = { prestado: 0, pagado: 0, saldo: 0 };
+    if (m.tipo === 'Me prestaron') misDeudas[p].prestado += m.monto;
+    if (m.tipo === 'Le pagué') misDeudas[p].pagado += m.monto;
+  });
+  for (var pd in misDeudas) misDeudas[pd].saldo = misDeudas[pd].prestado - misDeudas[pd].pagado;
+
   // custodias 👝: plata de OTROS que la usuaria guarda en sus cuentas
   var custodias = {};
   movs.forEach(function (m) {
@@ -371,6 +395,7 @@ function getState(mes) {
     movsMes: movs.filter(function (m) { return m.mes === mes; }).reverse(),
     recordatorios: recs,
     deudas: deudas,
+    misDeudas: misDeudas,
     custodias: custodias,
     alcancias: alcancias,
     diaAbono: diaAbono,
@@ -777,6 +802,215 @@ function invValor(dueno, cuenta, valor) {
   return { ok: true };
 }
 
+// ============================== CONDONAR DEUDA 🕊️ ==============================
+// direccion 'me_deben' = yo perdono lo que me debían (se vuelve un gasto real mío)
+// direccion 'yo_debo'  = me perdonaron lo que yo debía (solo se salda, no es ingreso)
+function condonarDeuda(persona, monto, direccion, nota) {
+  persona = String(persona || '').trim();
+  monto = Math.round(Number(monto));
+  if (!persona || !monto || monto <= 0) return { ok: false, error: 'Falta la persona o el monto' };
+  direccion = direccion === 'yo_debo' ? 'yo_debo' : 'me_deben';
+  var extra = nota ? ' — ' + String(nota).slice(0, 60) : '';
+
+  if (direccion === 'yo_debo') {
+    addMovimiento({ tipo: 'Le pagué', grupo: 'YO DEBO', categoria: persona, monto: monto,
+                    descripcion: '🕊️ ' + persona + ' me condonó la deuda' + extra });
+    return { ok: true, direccion: direccion, monto: monto };
+  }
+
+  // asegurar la categoría de gasto donde caen las deudas perdonadas
+  var ss = ss_();
+  var shP = ss.getSheetByName('Presupuesto');
+  var filas = shP.getLastRow() > 1 ? shP.getRange(2, 1, shP.getLastRow() - 1, 2).getValues() : [];
+  var grupo = '';
+  for (var i = 0; i < filas.length; i++) if (filas[i][1] === CAT_CONDONADAS) grupo = filas[i][0];
+  if (!grupo) { grupo = 'OBLIGACIONES'; shP.appendRow([grupo, CAT_CONDONADAS, 0]); buildDashboard(ss); }
+
+  addMovimiento({ tipo: 'Gasto', grupo: grupo, categoria: CAT_CONDONADAS, monto: monto,
+                  descripcion: '🕊️ Condoné deuda de ' + persona + extra });
+  addMovimiento({ tipo: 'Abono', grupo: 'POR COBRAR', categoria: persona, monto: monto,
+                  descripcion: '🕊️ Deuda condonada' + extra });
+  return { ok: true, direccion: direccion, monto: monto, categoria: CAT_CONDONADAS };
+}
+
+// ============================== VIAJES COMPARTIDOS ✈️ ==============================
+function viajesSheet_() {
+  var ss = ss_();
+  var sh = ss.getSheetByName('Viajes');
+  if (!sh) {
+    sh = ss.insertSheet('Viajes');
+    sh.getRange(1, 1, 1, VIAJE_HEADERS.length).setValues([VIAJE_HEADERS])
+      .setFontWeight('bold').setBackground('#7c5cbf').setFontColor('white');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function vgastosSheet_() {
+  var ss = ss_();
+  var sh = ss.getSheetByName('GastosViaje');
+  if (!sh) {
+    sh = ss.insertSheet('GastosViaje');
+    sh.getRange(1, 1, 1, VGASTO_HEADERS.length).setValues([VGASTO_HEADERS])
+      .setFontWeight('bold').setBackground('#7c5cbf').setFontColor('white');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+// reparte los saldos en el mínimo de transferencias
+function liquidar_(saldos) {
+  var deben = [], lesDeben = [];
+  for (var n in saldos) {
+    var s = Math.round(saldos[n]);
+    if (s < -1) deben.push({ n: n, v: -s });
+    else if (s > 1) lesDeben.push({ n: n, v: s });
+  }
+  deben.sort(function (a, b) { return b.v - a.v; });
+  lesDeben.sort(function (a, b) { return b.v - a.v; });
+  var pagos = [], i = 0, j = 0;
+  while (i < deben.length && j < lesDeben.length) {
+    var m = Math.min(deben[i].v, lesDeben[j].v);
+    pagos.push({ de: deben[i].n, a: lesDeben[j].n, monto: Math.round(m) });
+    deben[i].v -= m; lesDeben[j].v -= m;
+    if (deben[i].v <= 1) i++;
+    if (lesDeben[j].v <= 1) j++;
+  }
+  return pagos;
+}
+
+function viajesGet() {
+  var shV = viajesSheet_(), shG = vgastosSheet_();
+  var viajes = shV.getLastRow() > 1
+    ? shV.getRange(2, 1, shV.getLastRow() - 1, VIAJE_HEADERS.length).getValues().map(function (r) {
+        return { id: r[0], nombre: r[1], fecha: fmtDate(r[2]), estado: r[3] || 'activo',
+                 participantes: String(r[4] || 'Yo').split('|').filter(String), gastos: [] };
+      })
+    : [];
+  var porId = {};
+  viajes.forEach(function (v) { porId[v.id] = v; });
+
+  if (shG.getLastRow() > 1) {
+    shG.getRange(2, 1, shG.getLastRow() - 1, VGASTO_HEADERS.length).getValues().forEach(function (r) {
+      var v = porId[r[1]];
+      if (!v) return;
+      v.gastos.push({ id: r[0], fecha: fmtDate(r[2]), descripcion: r[3], monto: Number(r[4]) || 0,
+                      pago: r[5], entre: String(r[6] || '').split('|').filter(String) });
+    });
+  }
+
+  viajes.forEach(function (v) {
+    v.gastos.sort(function (a, b) { return a.fecha < b.fecha ? 1 : -1; });
+    v.total = 0;
+    var pagado = {}, debe = {};
+    v.participantes.forEach(function (p) { pagado[p] = 0; debe[p] = 0; });
+    v.gastos.forEach(function (g) {
+      v.total += g.monto;
+      if (pagado[g.pago] === undefined) pagado[g.pago] = 0;
+      pagado[g.pago] += g.monto;
+      var entre = g.entre.length ? g.entre : v.participantes;
+      var parte = g.monto / entre.length;
+      entre.forEach(function (p) { debe[p] = (debe[p] || 0) + parte; });
+    });
+    v.balances = v.participantes.map(function (p) {
+      return { persona: p, pago: Math.round(pagado[p] || 0), parte: Math.round(debe[p] || 0),
+               saldo: Math.round((pagado[p] || 0) - (debe[p] || 0)) };
+    });
+    var saldos = {};
+    v.balances.forEach(function (b) { saldos[b.persona] = b.saldo; });
+    v.liquidacion = liquidar_(saldos);
+    v.miParte = Math.round(debe['Yo'] || 0);
+    v.miPago = Math.round(pagado['Yo'] || 0);
+  });
+  viajes.sort(function (a, b) {
+    if (a.estado !== b.estado) return a.estado === 'activo' ? -1 : 1;
+    return a.fecha < b.fecha ? 1 : -1;
+  });
+  return { ok: true, viajes: viajes };
+}
+
+function viajeAdd(nombre, participantes) {
+  nombre = String(nombre || '').trim();
+  if (!nombre) return { ok: false, error: 'Ponle nombre al viaje' };
+  if (typeof participantes === 'string') participantes = participantes.split(/[|,]/);
+  var lista = ['Yo'];
+  (participantes || []).forEach(function (p) {
+    p = String(p).trim();
+    if (p && p.toLowerCase() !== 'yo' && lista.indexOf(p) < 0) lista.push(p);
+  });
+  if (lista.length < 2) return { ok: false, error: 'Agrega al menos una persona más' };
+  var id = 'v' + new Date().getTime();
+  viajesSheet_().appendRow([id, nombre, Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'), 'activo', lista.join('|')]);
+  return { ok: true, id: id };
+}
+
+function viajeDel(id) {
+  var shV = viajesSheet_(), shG = vgastosSheet_();
+  if (shG.getLastRow() > 1) {
+    var g = shG.getRange(2, 1, shG.getLastRow() - 1, 2).getValues();
+    for (var i = g.length - 1; i >= 0; i--) if (g[i][1] === id) shG.deleteRow(i + 2);
+  }
+  var v = shV.getRange(2, 1, Math.max(shV.getLastRow() - 1, 1), 1).getValues();
+  for (var j = 0; j < v.length; j++) if (v[j][0] === id) { shV.deleteRow(j + 2); return { ok: true }; }
+  return { ok: false, error: 'Viaje no encontrado' };
+}
+
+function viajeGastoAdd(req) {
+  var monto = Math.round(Number(req.monto));
+  if (!req.viajeId || !monto) return { ok: false, error: 'Falta el viaje o el monto' };
+  var entre = req.entre;
+  if (typeof entre === 'string') entre = entre.split(/[|,]/);
+  entre = (entre || []).map(function (p) { return String(p).trim(); }).filter(String);
+  vgastosSheet_().appendRow(['g' + new Date().getTime(), req.viajeId,
+    req.fecha || Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'),
+    String(req.descripcion || '').slice(0, 80), monto, String(req.pago || 'Yo'), entre.join('|')]);
+  return { ok: true };
+}
+
+function viajeGastoDel(id) {
+  var sh = vgastosSheet_();
+  var ids = sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), 1).getValues();
+  for (var i = 0; i < ids.length; i++) if (ids[i][0] === id) { sh.deleteRow(i + 2); return { ok: true }; }
+  return { ok: false, error: 'No encontrado' };
+}
+
+// cierra el viaje: opcionalmente registra tu parte como gasto y el saldo como deuda
+function viajeCerrar(req) {
+  var data = viajesGet().viajes.filter(function (v) { return v.id === req.viajeId; })[0];
+  if (!data) return { ok: false, error: 'Viaje no encontrado' };
+  var hechos = [];
+
+  if (req.registrarGasto && data.miParte > 0) {
+    var cat = String(req.categoria || 'Provisión Viajes');
+    var st = getState();
+    var p = st.presupuesto.filter(function (x) { return x.categoria === cat; })[0];
+    addMovimiento({ tipo: 'Gasto', grupo: p ? p.grupo : 'GUSTOS', categoria: cat, monto: data.miParte,
+                    descripcion: '✈️ ' + data.nombre + ' (mi parte)' });
+    hechos.push('tu parte (' + fmtCOP(data.miParte) + ') quedó como gasto en ' + cat);
+  }
+
+  if (req.registrarDeuda) {
+    data.liquidacion.forEach(function (t) {
+      if (t.a === 'Yo') {
+        addMovimiento({ tipo: 'Por cobrar', grupo: 'POR COBRAR', categoria: t.de, monto: t.monto,
+                        descripcion: '✈️ ' + data.nombre });
+        hechos.push(t.de + ' te debe ' + fmtCOP(t.monto));
+      } else if (t.de === 'Yo') {
+        addMovimiento({ tipo: 'Me prestaron', grupo: 'YO DEBO', categoria: t.a, monto: t.monto,
+                        descripcion: '✈️ ' + data.nombre });
+        hechos.push('le debes ' + fmtCOP(t.monto) + ' a ' + t.a);
+      }
+    });
+  }
+
+  var sh = viajesSheet_();
+  var ids = sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (ids[i][0] === req.viajeId) { sh.getRange(i + 2, 4).setValue('cerrado'); break; }
+  }
+  return { ok: true, hechos: hechos };
+}
+
 // historial completo de movimientos con una persona (para el desglose al tocar su nombre)
 function personaDetalle(persona) {
   persona = String(persona || '').trim();
@@ -786,7 +1020,7 @@ function personaDetalle(persona) {
   var movimientos = [];
   if (shM.getLastRow() > 1) {
     shM.getRange(2, 1, shM.getLastRow() - 1, MOV_HEADERS.length).getValues().forEach(function (r) {
-      if (r[5] === persona && (r[4] === 'POR COBRAR' || r[4] === 'PLATA AJENA')) {
+      if (r[5] === persona && (r[4] === 'POR COBRAR' || r[4] === 'PLATA AJENA' || r[4] === 'YO DEBO')) {
         movimientos.push({ id: r[0], fecha: fmtDate(r[1]), tipo: r[3], monto: Number(r[6]) || 0, descripcion: r[7] });
       }
     });
@@ -816,7 +1050,7 @@ function personaLimpiar(persona, confirmar) {
   if (shM.getLastRow() > 1) {
     var vals = shM.getRange(2, 1, shM.getLastRow() - 1, MOV_HEADERS.length).getValues();
     for (var i = vals.length - 1; i >= 0; i--) {
-      if (vals[i][5] === persona && (vals[i][4] === 'POR COBRAR' || vals[i][4] === 'PLATA AJENA')) {
+      if (vals[i][5] === persona && (vals[i][4] === 'POR COBRAR' || vals[i][4] === 'PLATA AJENA' || vals[i][4] === 'YO DEBO')) {
         shM.deleteRow(i + 2); borrados++;
       }
     }
@@ -1030,7 +1264,7 @@ function cierreMes() {
     ? '💜 ¡Tu cierre de ' + nombreMes + ' está listo! Ábrelo en la app 📊 (el detalle llegó a tu correo)'
     : texto;
 
-  var waOk = enviarWhatsApp(textoWA);
+  var waOk = enviarMensaje(textoWA);
   if (!waOk || discreto) {
     MailApp.sendEmail({
       to: Session.getEffectiveUser().getEmail(),
@@ -1064,6 +1298,46 @@ function enviarWhatsApp(texto) {
   } catch (e) { return false; }
 }
 
+// canal unificado: Telegram si está configurado (gratis, sin límites); si no, CallMeBot
+function enviarMensaje(texto) {
+  var p = PropertiesService.getScriptProperties();
+  if (p.getProperty('TG_TOKEN') && p.getProperty('TG_CHAT')) return enviarTelegram(texto);
+  return enviarWhatsApp(texto);
+}
+
+function enviarTelegram(texto) {
+  var p = PropertiesService.getScriptProperties();
+  var tk = p.getProperty('TG_TOKEN'), chat = p.getProperty('TG_CHAT');
+  if (!tk || !chat) return false;
+  var html = String(texto)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*([^*\n]+)\*/g, '<b>$1</b>');
+  try {
+    var r = UrlFetchApp.fetch('https://api.telegram.org/bot' + tk + '/sendMessage', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      payload: JSON.stringify({ chat_id: chat, text: html, parse_mode: 'HTML' })
+    });
+    return r.getResponseCode() === 200;
+  } catch (e) { return false; }
+}
+
+function tgSetup(token) {
+  var tp = PropertiesService.getScriptProperties();
+  if (token) tp.setProperty('TG_TOKEN', String(token).trim());
+  var tgtk = tp.getProperty('TG_TOKEN');
+  if (!tgtk) return { ok: false, error: 'falta token' };
+  var tr = UrlFetchApp.fetch('https://api.telegram.org/bot' + tgtk + '/getUpdates', { muteHttpExceptions: true });
+  var tout = JSON.parse(tr.getContentText());
+  var chat = null;
+  (tout.result || []).forEach(function (u) {
+    if (u.message && u.message.chat && u.message.chat.type === 'private') chat = u.message.chat.id;
+  });
+  if (chat) tp.setProperty('TG_CHAT', String(chat));
+  var listo = !!tp.getProperty('TG_CHAT');
+  if (listo) enviarTelegram('💰 ¡Hola! Tus alertas de Finanzas ahora viven en Telegram: presupuesto, recordatorios de pagos y cierre de mes llegan por aquí, sin anuncios ni límites ✨');
+  return { ok: listo, chat: listo ? 'configurado ✓' : 'token guardado, pero aún no le has dado /start al bot' };
+}
+
 // día del mes en que el aporte mensual entra a las alcancías (ej: 16 = quincena)
 function setDiaAbono(dia) {
   dia = Math.max(1, Math.min(28, Number(dia) || 1));
@@ -1082,7 +1356,7 @@ function esDiscreto_() {
 }
 
 function testWhatsapp() {
-  var enviado = enviarWhatsApp('💜 ¡Hola! Prueba exitosa: tus alertas y recordatorios de pagos llegarán por aquí.');
+  var enviado = enviarMensaje('💜 ¡Hola! Prueba exitosa: tus alertas y recordatorios de pagos llegarán por aquí.');
   return enviado ? { ok: true } : { ok: false, error: 'No se pudo enviar. Revisa el número y la apikey.' };
 }
 
@@ -1177,6 +1451,21 @@ function buildContext(st) {
     lines.push('\nRECORDATORIOS DE PAGO (día del mes):');
     st.recordatorios.forEach(function (r) { lines.push('- ' + r.nombre + ': día ' + r.dia + ', aprox ' + r.monto); });
   }
+  var yoDebo = Object.keys(st.misDeudas || {}).filter(function (p) { return st.misDeudas[p].saldo > 0; });
+  if (yoDebo.length) {
+    lines.push('\nLO QUE ELLA DEBE A OTROS:');
+    yoDebo.forEach(function (p) { lines.push('- ' + p + ': debe ' + st.misDeudas[p].saldo); });
+  }
+  try {
+    var vs = viajesGet().viajes.filter(function (v) { return v.estado === 'activo'; });
+    if (vs.length) {
+      lines.push('\nVIAJES/SALIDAS COMPARTIDAS EN CURSO:');
+      vs.forEach(function (v) {
+        lines.push('- ' + v.nombre + ': gasto total ' + v.total + ', su parte ' + v.miParte + ', ella ha pagado ' + v.miPago);
+        v.liquidacion.forEach(function (t) { lines.push('   · ' + t.de + ' le debe a ' + t.a + ': ' + t.monto); });
+      });
+    }
+  } catch (e) {}
   var pers = Object.keys(st.custodias || {});
   if (pers.length) {
     lines.push('\nPLATA AJENA QUE GUARDA EN SUS CUENTAS (custodia — no es de ella):');
@@ -1311,7 +1600,7 @@ function dailyCheck() {
     var texto = discreto
       ? '💜 Tienes ' + avisos.length + ' aviso(s) de tus finanzas. Abre tu app para verlos.'
       : '💜 *Tus finanzas — avisos de hoy:*\n\n' + avisos.join('\n');
-    var waOk = enviarWhatsApp(texto);
+    var waOk = enviarMensaje(texto);
     if (!waOk || discreto) {
       MailApp.sendEmail({
         to: email,
