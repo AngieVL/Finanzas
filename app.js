@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 29;
+const APP_VERSION = 30;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -158,7 +158,10 @@ function hoyFecha() {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 function hoyMes() { return hoyFecha().slice(0, 7); }
-function fmt(n) { return '$' + Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+function fmt(n) {
+  const v = Math.round(n);
+  return (v < 0 ? '−$' : '$') + Math.abs(v).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
 // adivinador de emoji por el nombre de la categoría (para las personalizadas)
 const EMOJI_SUGERIDOS = [
   [/mascota|perr|gat|tobby|veterinaria/i, '🐶'], [/gym|gimnas|ejercicio|deporte/i, '🏋️'],
@@ -972,9 +975,10 @@ function renderResTab(tab) {
   rtabActivo = tab;
   document.querySelectorAll('#res-tabs button').forEach(b =>
     b.classList.toggle('active', b.dataset.rtab === tab));
-  ['mes', 'tend', 'patri', 'metas', 'viajes'].forEach(t =>
+  ['mes', 'anio', 'tend', 'patri', 'metas', 'viajes'].forEach(t =>
     $('rtab-' + t).classList.toggle('hidden', t !== tab));
   if (tab === 'mes') renderResumen();
+  if (tab === 'anio') renderAnual();
   if (tab === 'tend') renderTendencias();
   if (tab === 'patri') { patriItems = null; renderPatrimonio(); }
   if (tab === 'metas') renderMetas();
@@ -988,6 +992,106 @@ function moverMes(delta) {
   if (m > 12) { m = 1; y++; }
   mesVista = y + '-' + String(m).padStart(2, '0');
   renderResumen();
+}
+
+// ---------------- resumen anual 🗓️ ----------------
+let anioVista = new Date().getFullYear();
+
+async function renderAnual() {
+  const box = $('rtab-anio');
+  box.innerHTML = '<div class="card">Cargando el año... 🗓️</div>';
+  let d;
+  try { d = await api({ action: 'anual', anio: anioVista }); }
+  catch (e) { box.innerHTML = `<div class="card">Sin conexión: ${e.message}</div>`; return; }
+  const t = d.totales;
+  const mesActual = new Date().getMonth();
+
+  // filas de meses (solo los que tienen datos, más el actual)
+  let filas = '';
+  d.meses.forEach((m, i) => {
+    const vacio = !m.ingresos && !m.gastos;
+    if (vacio && i > mesActual) return;
+    filas += `
+      <tr class="${i === mesActual && anioVista === new Date().getFullYear() ? 'mes-actual' : ''} ${vacio ? 'vacio' : ''}">
+        <td>${NOMBRES_MES[i]}</td>
+        <td class="ing">${m.ingresos ? fmt(m.ingresos) : '–'}</td>
+        <td class="gas">${m.gastos ? fmt(m.gastos) : '–'}</td>
+        <td class="${m.neto < 0 ? 'neg' : 'net'}">${(m.ingresos || m.gastos) ? fmt(m.neto) : '–'}</td>
+      </tr>`;
+  });
+
+  let html = `
+    <div class="month-nav">
+      <button id="anio-prev" class="icon-btn">◀</button>
+      <h2>🗓️ ${d.anio}</h2>
+      <button id="anio-next" class="icon-btn">▶</button>
+    </div>
+
+    <div class="totales">
+      <div class="tot ing"><small>Ingresos del año</small><b>${fmt(t.ingresos)}</b></div>
+      <div class="tot gas"><small>Gastos del año</small><b>${fmt(t.gastos)}</b></div>
+    </div>
+    <div class="card anual-hero">
+      <small>Te quedó (ingresos − gastos)</small>
+      <div class="gran ${t.neto < 0 ? 'neg' : ''}">${fmt(t.neto)}</div>
+      <span class="hint">Ahorraste el <b>${t.tasaAhorro}%</b> de lo que ganaste · ${d.mesesActivos} ${d.mesesActivos === 1 ? 'mes' : 'meses'} con movimientos</span>
+    </div>
+
+    <div class="card chart-card">
+      <h3>📅 Mes a mes</h3>
+      <table class="tabla-anual">
+        <tr><th>Mes</th><th>Ingresos</th><th>Gastos</th><th>Neto</th></tr>
+        ${filas}
+        <tr class="fila-total"><td>TOTAL</td><td class="ing">${fmt(t.ingresos)}</td><td class="gas">${fmt(t.gastos)}</td><td class="${t.neto < 0 ? 'neg' : 'net'}">${fmt(t.neto)}</td></tr>
+        <tr class="fila-prom"><td>PROMEDIO</td><td class="ing">${fmt(t.promIngresos)}</td><td class="gas">${fmt(t.promGastos)}</td><td class="${t.promNeto < 0 ? 'neg' : 'net'}">${fmt(t.promNeto)}</td></tr>
+      </table>
+      <p class="hint">El promedio se calcula sobre los meses con movimientos, como en tu Excel.</p>
+    </div>`;
+
+  // comparación con el presupuesto
+  if (t.presupuestoMensual > 0) {
+    const difProm = t.presupuestoMensual - t.promGastos;
+    html += `
+      <div class="card">
+        <h3>🎯 Contra tu presupuesto</h3>
+        <div class="pd-tot"><span>Presupuestado por mes</span><b>${fmt(t.presupuestoMensual)}</b></div>
+        <div class="pd-tot"><span>Gastas en promedio</span><b>${fmt(t.promGastos)}</b></div>
+        <div class="pd-tot"><span>${difProm >= 0 ? '✅ Te sobra cada mes' : '🚨 Te faltan cada mes'}</span><b class="${difProm >= 0 ? 'verde' : 'amber'}">${fmt(Math.abs(difProm))}</b></div>
+      </div>`;
+  }
+
+  // categorías del año agrupadas
+  const grupos = ['GASTOS', 'OBLIGACIONES', 'GUSTOS', 'PROVISIONES'];
+  grupos.forEach(g => {
+    const cats = d.categorias.filter(c => c.grupo === g);
+    if (!cats.length) return;
+    const totG = cats.reduce((s, c) => s + c.total, 0);
+    let rows = '';
+    cats.forEach(c => {
+      rows += `
+        <tr>
+          <td>${emoji(c.categoria)} ${c.categoria.replace('Provisión ', '')}</td>
+          <td>${fmt(c.total)}</td>
+          <td class="prom">${fmt(c.promedio)}</td>
+        </tr>`;
+    });
+    html += `
+      <div class="card chart-card">
+        <h3>${GROUP_EMOJI[g]} ${g} — ${fmt(totG)} en el año</h3>
+        <table class="tabla-anual">
+          <tr><th>Categoría</th><th>Total año</th><th>Prom/mes</th></tr>
+          ${rows}
+        </table>
+      </div>`;
+  });
+
+  if (!d.categorias.length && !t.ingresos) {
+    html += '<div class="card"><p class="hint">Todavía no hay movimientos registrados en este año.</p></div>';
+  }
+
+  box.innerHTML = html;
+  $('anio-prev').onclick = () => { anioVista--; renderAnual(); };
+  $('anio-next').onclick = () => { anioVista++; renderAnual(); };
 }
 
 // ---------------- tendencias 📈 ----------------

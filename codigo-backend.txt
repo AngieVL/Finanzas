@@ -200,6 +200,7 @@ function handle(req) {
       case 'test_whatsapp': out = testWhatsapp(); break;
       case 'tg_setup':     out = tgSetup(req.token); break;
       case 'tendencias':   out = getTendencias(); break;
+      case 'anual':        out = resumenAnual(req.anio); break;
       case 'patrimonio_get':  out = patrimonioGet(); break;
       case 'patrimonio_save': out = patrimonioSave(req.mes, req.items); break;
       case 'meta_add':     out = metaAdd(req.nombre, req.objetivo, req.fecha); break;
@@ -1203,6 +1204,68 @@ function getTendencias() {
   }).sort(function (a, b) { return b.total - a.total; }).slice(0, 8);
 
   return { ok: true, meses: meses.slice(-12), topCategorias: topCategorias, ytd: ytd, anio: Number(anio) };
+}
+
+// ============================== RESUMEN ANUAL 🗓️ ==============================
+function resumenAnual(anio) {
+  anio = String(anio || Utilities.formatDate(new Date(), TZ, 'yyyy'));
+  var sh = ss_().getSheetByName('Movimientos');
+  var rows = sh.getLastRow() > 1
+    ? sh.getRange(2, 1, sh.getLastRow() - 1, MOV_HEADERS.length).getValues() : [];
+
+  var meses = [];
+  for (var i = 1; i <= 12; i++) meses.push({ mes: ('0' + i).slice(-2), ingresos: 0, gastos: 0 });
+  var cats = {};
+  var anios = {};
+
+  rows.forEach(function (r) {
+    var fecha = fmtDate(r[1]);
+    anios[fecha.slice(0, 4)] = true;
+    if (fecha.slice(0, 4) !== anio) return;
+    var idx = Number(fecha.slice(5, 7)) - 1;
+    if (idx < 0 || idx > 11) return;
+    var tipo = r[3], grupo = r[4], cat = r[5], monto = Number(r[6]) || 0;
+    if (tipo === 'Ingreso') meses[idx].ingresos += monto;
+    else if (tipo === 'Gasto') {
+      meses[idx].gastos += monto;
+      if (!cats[cat]) cats[cat] = { categoria: cat, grupo: grupo, total: 0, mesesConGasto: 0 };
+      cats[cat].total += monto;
+      if (!cats[cat]['m' + idx]) { cats[cat]['m' + idx] = true; cats[cat].mesesConGasto++; }
+    }
+  });
+
+  var totIng = 0, totGas = 0, activos = 0;
+  meses.forEach(function (m) {
+    m.neto = m.ingresos - m.gastos;
+    totIng += m.ingresos; totGas += m.gastos;
+    if (m.ingresos || m.gastos) activos++;
+  });
+  var n = activos || 1;
+
+  var categorias = Object.keys(cats).map(function (c) {
+    return { categoria: c, grupo: cats[c].grupo, total: cats[c].total,
+             promedio: Math.round(cats[c].total / n) };
+  }).sort(function (a, b) { return b.total - a.total; });
+
+  var st = getState();
+  var presMensual = st.presupuesto.filter(function (p) { return p.grupo !== 'INGRESOS'; })
+    .reduce(function (s, p) { return s + p.mensual; }, 0);
+  var ingMensual = st.presupuesto.filter(function (p) { return p.grupo === 'INGRESOS'; })
+    .reduce(function (s, p) { return s + p.mensual; }, 0);
+
+  return {
+    ok: true, anio: Number(anio), meses: meses, categorias: categorias,
+    mesesActivos: activos,
+    totales: {
+      ingresos: totIng, gastos: totGas, neto: totIng - totGas,
+      promIngresos: Math.round(totIng / n), promGastos: Math.round(totGas / n),
+      promNeto: Math.round((totIng - totGas) / n),
+      tasaAhorro: totIng > 0 ? Math.round((totIng - totGas) / totIng * 100) : 0,
+      presupuestoMensual: presMensual, presupuestoAnual: presMensual * 12,
+      ingresoPresupuestado: ingMensual
+    },
+    aniosDisponibles: Object.keys(anios).sort()
+  };
 }
 
 // ============================== PATRIMONIO ==============================
