@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 31;
+const APP_VERSION = 32;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -107,38 +107,82 @@ const cfg = JSON.parse(localStorage.getItem('cfg') || '{}');
 let prefs = JSON.parse(localStorage.getItem('prefs') || '{}'); // {tema, color, emojis:{cat:emoji}}
 
 // ---------------- apariencia ----------------
+// v = color principal · d = tono oscuro · p = acento del degradado
+// l / dl = tinte suave para chips y tarjetas (claro / oscuro)
+// v principal · d oscuro · p acento del degradado
+// l/lb tinte y borde en modo claro · dl/dl2 tintes en oscuro · soft texto de acento en oscuro
 const COLORES = [
-  { nombre: 'Violeta', v: '#6d4fc4', d: '#57399f', p: '#e85d9b' },
-  { nombre: 'Rosa',    v: '#e0489a', d: '#b32e78', p: '#f7a2c8' },
-  { nombre: 'Azul',    v: '#3f7ce0', d: '#2c5ab3', p: '#6fc3e8' },
-  { nombre: 'Verde',   v: '#189a70', d: '#0f7a57', p: '#7adcb8' },
-  { nombre: 'Naranja', v: '#e8762e', d: '#c05515', p: '#f2b263' },
-  { nombre: 'Café',    v: '#8a6248', d: '#6b4a34', p: '#c99b7a' },
+  { nombre: 'Índigo',  v: '#4f46e5', d: '#3730a3', p: '#6d8bf5', l: '#e8e7fc', lb: '#d6d4f7', dl: '#2a2a4d', dl2: '#383a63', soft: '#a5b4fc' },
+  { nombre: 'Grafito', v: '#4a5568', d: '#2d3748', p: '#7d8fa8', l: '#e9ecf1', lb: '#d5dbe4', dl: '#282f3d', dl2: '#38414f', soft: '#b6c2d3' },
+  { nombre: 'Violeta', v: '#6d4fc4', d: '#57399f', p: '#e85d9b', l: '#efeafc', lb: '#e4def5', dl: '#322a49', dl2: '#3d3459', soft: '#cbbdf5' },
+  { nombre: 'Azul',    v: '#3f7ce0', d: '#2c5ab3', p: '#6fc3e8', l: '#e6effb', lb: '#cfe0f5', dl: '#22334d', dl2: '#2e4467', soft: '#a8cbf5' },
+  { nombre: 'Teal',    v: '#0d9488', d: '#0f766e', p: '#4fd1c5', l: '#e2f4f2', lb: '#c6e8e4', dl: '#1d3b39', dl2: '#27504c', soft: '#8fe3d8' },
+  { nombre: 'Verde',   v: '#189a70', d: '#0f7a57', p: '#7adcb8', l: '#e4f4ee', lb: '#c8e8dc', dl: '#1e3a30', dl2: '#2a4f42', soft: '#9be3c6' },
+  { nombre: 'Naranja', v: '#e8762e', d: '#c05515', p: '#f2b263', l: '#fceee3', lb: '#f7dcc4', dl: '#40291a', dl2: '#573726', soft: '#f5c48f' },
+  { nombre: 'Café',    v: '#8a6248', d: '#6b4a34', p: '#c99b7a', l: '#f3ebe5', lb: '#e4d5c9', dl: '#38291f', dl2: '#4c382a', soft: '#dcb69a' },
+  { nombre: 'Rosa',    v: '#e0489a', d: '#b32e78', p: '#f7a2c8', l: '#fce7f2', lb: '#f7cfe3', dl: '#41203a', dl2: '#582b4e', soft: '#f7b8da' },
 ];
+
+const LOGOS = ['📊', '💰', '💵', '📈', '🏦', '💳', '🪙', '🎯', '🧾', '💎', '⚡', '🐷', '💜', '⭐'];
+
+function paletaActual() {
+  return COLORES.find(x => x.nombre === prefs.color) || COLORES[0];
+}
 
 function applyPrefs() {
   const tema = prefs.tema || 'auto';
   const oscuro = tema === 'oscuro' ||
     (tema === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   document.body.classList.toggle('dark', oscuro);
-  const c = COLORES.find(x => x.nombre === prefs.color) || COLORES[0];
-  const r = document.documentElement.style;
+  const c = paletaActual();
+  // se aplican sobre body (no sobre html) para tener prioridad sobre las reglas de body.dark
+  const r = document.body.style;
   r.setProperty('--violet', c.v);
   r.setProperty('--violet-dark', c.d);
   r.setProperty('--pink', c.p);
+  r.setProperty('--violet-light', oscuro ? c.dl : c.l);
+  r.setProperty('--tint2', oscuro ? c.dl2 : c.lb);
+  r.setProperty('--soft', oscuro ? c.soft : c.d);
   document.querySelector('meta[name="theme-color"]').content = c.v;
+  // ícono y nombre de la app
+  const logo = prefs.logo || LOGOS[0];
+  const nombreApp = (prefs.appNombre || '').trim() || 'Mis Finanzas';
+  $('app-logo').textContent = logo;
+  $('app-titulo').textContent = nombreApp;
+  document.title = nombreApp + ' ' + logo;
 }
 
 function renderApariencia() {
   document.querySelectorAll('#tema-toggle button').forEach(b =>
     b.classList.toggle('active', b.dataset.tema === (prefs.tema || 'auto')));
+
+  const logos = $('logo-opciones');
+  logos.innerHTML = '';
+  LOGOS.forEach(e => {
+    const b = document.createElement('button');
+    b.textContent = e;
+    b.className = (prefs.logo || LOGOS[0]) === e ? 'sel' : '';
+    b.onclick = () => { prefs.logo = e; savePrefs(); renderApariencia(); };
+    logos.appendChild(b);
+  });
+  const otro = document.createElement('button');
+  otro.textContent = '➕';
+  otro.title = 'Otro emoji';
+  otro.onclick = () => {
+    const v = prompt('Escribe el emoji que quieres como ícono de tu app:', prefs.logo || '');
+    if (v === null) return;
+    prefs.logo = v.trim() || LOGOS[0];
+    savePrefs(); renderApariencia();
+  };
+  logos.appendChild(otro);
+
   const box = $('color-swatches');
   box.innerHTML = '';
   COLORES.forEach(c => {
     const b = document.createElement('button');
     b.style.background = `linear-gradient(120deg, ${c.v}, ${c.p})`;
     b.title = c.nombre;
-    b.className = (prefs.color || 'Violeta') === c.nombre ? 'sel' : '';
+    b.className = (prefs.color || COLORES[0].nombre) === c.nombre ? 'sel' : '';
     b.onclick = () => { prefs.color = c.nombre; savePrefs(); renderApariencia(); };
     box.appendChild(b);
   });
@@ -1681,7 +1725,7 @@ async function renderMovs() {
 // ---------------- chat (multi-conversación) ----------------
 function BIENVENIDA() {
   const n = prefs.nombre ? ` ${prefs.nombre}` : '';
-  return `¡Hola${n}! 💜 Soy tu asesora financiera. Tengo acceso a tu presupuesto y todos tus movimientos. Pregúntame lo que quieras: "¿cómo voy este mes?", "¿en qué estoy gastando de más?", "¿cuánto puedo ahorrar?"`;
+  return `¡Hola${n}! ${prefs.logo || '📊'} Soy tu asesora financiera. Tengo acceso a tu presupuesto y todos tus movimientos. Pregúntame lo que quieras: "¿cómo voy este mes?", "¿en qué estoy gastando de más?", "¿cuánto puedo ahorrar?"`;
 }
 
 function chatActivo() {
@@ -2186,7 +2230,13 @@ function init() {
     prefs.nombre = $('cfg-nombre').value.trim();
     savePrefs();
     renderChatBox();
-    toast(prefs.nombre ? `✓ ¡Hola ${prefs.nombre}! 💜` : 'Nombre borrado');
+    toast(prefs.nombre ? `✓ ¡Hola ${prefs.nombre}!` : 'Nombre borrado');
+  };
+  $('cfg-app-nombre').value = prefs.appNombre || '';
+  $('cfg-app-nombre').onchange = () => {
+    prefs.appNombre = $('cfg-app-nombre').value.trim();
+    savePrefs();
+    toast('✓ Nombre de la app actualizado');
   };
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyPrefs);
 

@@ -8,15 +8,15 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="styles.css?v=31">
+<link rel="stylesheet" href="styles.css?v=32">
 </head>
 <body>
 
 <header class="top">
   <div class="brand">
-    <span class="logo">💜</span>
+    <span class="logo" id="app-logo">📊</span>
     <div>
-      <h1>Mis Finanzas</h1>
+      <h1 id="app-titulo">Mis Finanzas</h1>
       <p id="mes-label"></p>
     </div>
   </div>
@@ -128,6 +128,10 @@
       <h3>🎨 Apariencia</h3>
       <label>Tu nombre (para que la app y tu asesora te saluden)</label>
       <input id="cfg-nombre" type="text" placeholder="Escribe tu nombre" maxlength="30">
+      <label>Nombre de la app</label>
+      <input id="cfg-app-nombre" type="text" placeholder="Mis Finanzas" maxlength="24">
+      <label>Ícono</label>
+      <div id="logo-opciones" class="logos"></div>
       <label>Tema</label>
       <div class="tipo-toggle" id="tema-toggle">
         <button data-tema="auto">🌗 Auto</button>
@@ -197,6 +201,6 @@
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="app.js?v=31"></script>
+<script src="app.js?v=32"></script>
 </body>
 </html>
