@@ -37,8 +37,8 @@
 
 <div class="hero">
   <h1>💜 Mis Finanzas</h1>
-  <p>Una app gratuita para dominar tu plata: registra gastos en segundos (¡o por voz, o con foto de la factura!),
-  presupuesto vivo, alcancías de ahorro, metas, patrimonio, deudas y una asesora con IA.
+  <p>Una app gratuita para dominar tu plata: registra gastos en segundos (¡escribiendo, por voz o con foto de la factura!),
+  presupuesto vivo, alcancías de ahorro, metas, patrimonio, deudas, viajes compartidos y una asesora con IA.
   <b>Tus datos viven únicamente en TU cuenta de Google.</b></p>
 </div>
 
@@ -47,8 +47,24 @@
     <h2>🔐 ¿Cómo funciona?</h2>
     <p>La app es una página web instalable. Tus datos <b>no</b> se guardan en ningún servidor de terceros:
     viven en una hoja de Google Sheets <b>de tu propiedad</b>, con un pequeño "cerebro" (Google Apps Script)
-    que tú misma instalarás en tu cuenta en los pasos de abajo. Gratis para siempre, sin anuncios, sin registros.</p>
+    que tú mismo instalarás en tu cuenta en los pasos de abajo. Gratis para siempre, sin anuncios, sin registros.</p>
     <p class="mut" style="margin-top:8px">Necesitas: una cuenta de Google (Gmail) y ~15 minutos. Hazlo desde un computador (es más cómodo).</p>
+  </div>
+
+  <div class="card">
+    <h2>✨ Qué puedes hacer con ella</h2>
+    <ul>
+      <li><b>Registrar en segundos:</b> escribes <i>"15.000 transporte"</i> y ella detecta el monto y la categoría sola. También por voz 🎤 o escaneando la factura 📷 (separa cada artículo y le asignas su categoría).</li>
+      <li><b>Presupuesto vivo:</b> tus categorías, con barras que avisan cuando te acercas o te pasas.</li>
+      <li><b>Alcancías 🏦:</b> para gastos que no son mensuales (celular, viajes, regalos). Ahorras un poquito cada mes y la compra sale del fondo acumulado — sin sustos.</li>
+      <li><b>Metas 🎯:</b> "viaje a X", "cuota inicial" — te dice cuánto ahorrar por mes y te lo recuerda.</li>
+      <li><b>Personas 🤝:</b> quién te debe, a quién le debes, y hasta plata de otros que tú guardas. Con historial por persona, condonar deudas y cruce de cuentas.</li>
+      <li><b>Viajes compartidos ✈️:</b> uno paga, todos anotan, y al final la app dice quién le debe a quién.</li>
+      <li><b>Patrimonio 💎 e inversiones:</b> tu evolución mes a mes y cuánto han ganado tus inversiones.</li>
+      <li><b>Resumen anual 🗓️:</b> ingresos, gastos y promedios de todo el año, como una hoja de Excel.</li>
+      <li><b>Asesora con IA 💬:</b> pregúntale <i>"¿cómo voy este mes?"</i> y responde con TUS números.</li>
+      <li><b>Avisos por WhatsApp 📱</b> o correo: recordatorios de pagos, resumen quincenal y cierre de mes.</li>
+    </ul>
   </div>
 
   <div class="card paso"><div class="num">1</div><div>
@@ -72,6 +88,9 @@
     y presiona <b>▶ Ejecutar</b>.</p>
     <div class="aviso">Google te pedirá permisos: elige tu cuenta → te dirá <i>"Google no ha verificado esta app"</i>
     (es normal: la "app" es tu propio código, en tu propia cuenta) → <b>Configuración avanzada → Ir a... (no seguro) → Permitir</b>.</div>
+    <div class="aviso">💡 <b>Dos consejos de oro</b> (nos costaron una noche entera 😅):<br>
+    · Hazlo con <b>UNA sola cuenta de Google</b> abierta en el navegador. Si tienes varias sesiones, usa una ventana de incógnito.<br>
+    · Si tu <b>Google Drive está lleno</b>, Google falla con un mensaje engañoso que dice "no tienes permiso". Libera espacio y reintenta.</div>
     <p style="margin-top:8px">Al final verás en el registro: <span class="ok">✅ Listo. Hoja creada...</span>
     Tu hoja ahora tiene las pestañas Presupuesto, Movimientos, Dashboard y más.</p>
   </div></div>
@@ -119,6 +138,29 @@
     <h2>🎉 ¡Y eso es todo!</h2>
     <p>Registra tus gastos como si chatearas ("15.000 almuerzo"), habla por el micrófono, escanéale fotos a tus facturas,
     y deja que la app sume, grafique, te alerte y te acompañe. Tu plata, tus reglas, tus datos.</p>
+    <p style="margin-top:8px">Primeros pasos recomendados: en <b>⚙️ Mis categorías</b> arma tu presupuesto
+    (renombra, elimina o crea las que quieras, y ponle monto a tus ingresos para ver tu superávit).</p>
+  </div>
+
+  <div class="card">
+    <h2>🆘 ¿Algo no salió bien?</h2>
+    <ul>
+      <li><b>"No tienes permiso para acceder al documento"</b> → casi siempre es el <b>Drive lleno</b> o varias cuentas de Google mezcladas. Libera espacio y reintenta en incógnito con una sola cuenta.</li>
+      <li><b>La app dice "no se pudo guardar, quedó en pendientes"</b> → tu movimiento NO se perdió; se envía solo cuando la conexión con Google vuelva. Suele pasar por lo mismo de arriba.</li>
+      <li><b>El chat responde "falta la key"</b> → te falta el paso 6 (la API key gratuita de Gemini).</li>
+      <li><b>Cambiaste algo en Apps Script y la app no lo nota</b> → después de editar el código hay que hacer <b>Implementar → Administrar implementaciones → ✏️ → Versión: Nueva versión → Implementar</b>. La URL sigue siendo la misma.</li>
+      <li><b>La app no muestra las mejoras nuevas</b> → en <b>⚙️ Conexión</b> toca <b>🔄 Buscar actualización</b>. Ahí mismo ves qué versión tienes.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>🔒 Sobre tu privacidad (sin letra pequeña)</h2>
+    <ul>
+      <li>Tus datos viven en <b>tu</b> hoja de Google. No hay servidor de nadie más, ni base de datos externa, ni registro de usuarios.</li>
+      <li>La <b>URL /exec es tu llave</b>: quien la tenga puede ver y escribir tus finanzas. No la compartas ni la muestres en pantallazos. Si se filtra, creas una nueva implementación y la vieja queda inservible.</li>
+      <li>El <b>chat con IA</b> le envía a Google un resumen de tus finanzas en cada pregunta. En el nivel gratuito, Google puede usar esos datos para mejorar sus modelos: es el precio de que sea gratis. Si prefieres, no configures la key y usa el resto de la app igual.</li>
+      <li>Los <b>avisos por WhatsApp</b> pasan por un servicio gratuito externo (CallMeBot), que solo ve el texto del aviso. En ⚙️ puedes activar el <b>modo discreto</b> para que esos mensajes lleguen sin montos.</li>
+    </ul>
   </div>
 </main>
 

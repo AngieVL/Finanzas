@@ -1,7 +1,7 @@
 {
   "name": "Mis Finanzas",
   "short_name": "Finanzas",
-  "description": "Control de finanzas personales de Angie",
+  "description": "Tu presupuesto, alcancías, metas y asesora financiera — todo en tu cuenta de Google",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#f6f4fb",

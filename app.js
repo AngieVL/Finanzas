@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 30;
+const APP_VERSION = 31;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -37,21 +37,20 @@ const RULES = [
   [/internet/i, 'Internet'],
   [/\bdatos\b|plan datos/i, 'Datos móviles'],
   [/supermercado|mercado|\bd1\b|\bara\b|\boxxo\b|fruta|exito|éxito|leche|\bpan\b|arroz|huevo|queso|carne|pollo|verdura|galleta|cereal|aseo|jab[oó]n|detergente|papel higi/i, 'Mercado, aseo'],
-  [/comida tob+y/i, 'Comida Tobby'],
   [/\bgym\b/i, 'GYM'],
   [/danza|nataci/i, 'Danza'],
   [/cuota (de )?manejo/i, 'Cuota de manejo'],
   [/\bss\b|seguridad social|pensi[oó]n y salud/i, 'Seguridad social'],
-  [/mesada patri/i, 'Mesada Patri'],
+  [/mesada/i, 'Mesada'],
   [/donaci|diezmo/i, 'Donaciones'],
   [/abogada|declaraci/i, 'Abogada declaración renta'],
   [/impuesto|4x1000/i, 'Impuestos'],
-  [/tob+y|guacal|veterinari|purgante|pulgas/i, 'Provisión Tobby'],
+  [/mascota|veterinari|purgante|pulgas|guacal/i, 'Provisión Mascota'],
   [/claude|adobe|photoshop|lightroom|spotify|wix\b|\bpc\b|celular|monitor|teclado|mouse|aud[ií]fono|cargador|\busb\b|jbl/i, 'Provisión Tecnología'],
   [/pastilla|anticonceptiv|l[aá]ser|dermaskin|dermat[oó]log|ortodoncia|ortorio|orto rio|caries|odontolog|cabello|maquillaje|skincare|crema|shampoo|pesta[ñn]|u[ñn]as|labial|esmalte|bloqueador|centrum|suplemento|medicament|drogueri|farmacia|cita m[eé]dica|psic[oó]log|terapia|perfume|loci[oó]n/i, 'Provisión Belleza/salud'],
   [/viaje|airbnb|hotel|paseo|tiquete|vuelo|playa/i, 'Provisión Viajes'],
   [/regalo|cumple|navidad|navide|ancheta/i, 'Provisión Regalos'],
-  [/insights|inversi[oó]n|bitcoin|spacex|ahorro/i, 'Provisión Independencia'],
+  [/inversi[oó]n|bitcoin|cripto|acciones|etf|ahorro/i, 'Provisión Independencia'],
   [/transporte|indriver|picap|taxi|c[ií]vica|civica|\bmetro\b|parqueadero|uber|gasolina|peaje/i, 'Transporte'],
   [/almuerzo|cena|desayuno|restaurante|pizza|hamburg|sushi|alitas|qbano|helado|mecato|caf[eé]|starbucks|c[oó]ctel|donas|wok|subway|arepa|comida|postre|torta|papitas|sanduche|gatorade|cerveza|jugo|burger|antojo|salida|mcflurry|coca cola|papa john/i, 'Restaurantes'],
   [/ropa|shein|blusa|pantal[oó]n|camisa|vestido|zapato|tenis|chancla|medias|bolso|collar|arete|reloj|decathlon|dollarcity|chaqueta|gorra/i, 'Ropa'],
@@ -63,12 +62,25 @@ const RULES_ING = [
   [/\bba\b|prima|\bdc\b|salario/i, 'Salario fijo'],
   [/forja/i, 'Freelances Forja'],
   [/violinist|shift|axtrom|freelance|\bbg\b|edici[oó]n|vend[ií]/i, 'Freelances Extras'],
-  [/me debe|deuda|devuel|pag[oó]|envi[oó]|plata patri|parte de/i, 'Reembolso'],
+  [/me debe|deuda|devuel|pag[oó]|envi[oó]|parte de/i, 'Reembolso'],
 ];
 
 function clasificar(desc, tipo) {
   const rules = tipo === 'Ingreso' ? RULES_ING : RULES;
   let cat = tipo === 'Ingreso' ? 'Otros Ingresos' : 'Otros';
+  const d = ' ' + String(desc).toLowerCase() + ' ';
+  // 0) lo que la app te ha aprendido: palabras que TÚ has corregido antes
+  const aprendido = prefs.aprendido || {};
+  for (const palabra in aprendido) {
+    if (d.includes(' ' + palabra) && getCats(tipo).some(x => x.c === aprendido[palabra])) return aprendido[palabra];
+  }
+  // 1) ¿la descripción menciona el nombre de una de TUS categorías? (ej: "comida tobby" → Comida Tobby)
+  const directa = getCats(tipo).find(c => {
+    const n = c.c.toLowerCase().replace('provisión ', '').trim();
+    return n.length > 3 && d.includes(n);
+  });
+  if (directa) return directa.c;
+  // 2) si no, las reglas por palabras clave
   for (const [re, c] of rules) if (re.test(desc)) { cat = c; break; }
   // si renombraste la categoría, usar el nombre nuevo
   const alias = (state && state.aliases) || {};
@@ -353,6 +365,15 @@ async function guardar() {
   } else {
     categoria = catSel || clasificar(p.desc, tipo);
     grupo = grupoDe(categoria, tipo);
+    // si corregiste la categoría a mano, la app aprende esa palabra para la próxima
+    if (catManual && p.desc) {
+      const palabras = p.desc.toLowerCase().match(/[a-záéíóúñ]{4,}/g) || [];
+      if (palabras.length && clasificar(p.desc, tipo) !== categoria) {
+        prefs.aprendido = prefs.aprendido || {};
+        prefs.aprendido[palabras[0]] = categoria;
+        savePrefs();
+      }
+    }
   }
   const mov = {
     action: 'add', fecha: $('entry-fecha').value || hoyFecha(), tipo,
@@ -513,7 +534,7 @@ async function renderResumen() {
         <h4><span>🏦 PROVISIONES (alcancías)</span><span>${fmt(dispTotal)} disponibles${gananciaTotal ? ` <span class="delta ${gananciaTotal >= 0 ? 'pos' : 'neg'}">${gananciaTotal >= 0 ? '▲' : '▼'}${fmt(Math.abs(gananciaTotal))}</span>` : ''}</span></h4>
         ${rows}
         <button class="chip-btn" id="alc-invertir" style="margin-top:8px;font-size:12px;padding:6px 12px">📈 Invertí plata de una alcancía</button>
-        <p class="hint" style="margin-top:8px">El aporte de cada mes entra a las alcancías el día ${st.diaAbono || 1} 📅. Tus compras salen del fondo acumulado. Si parte está invertida, toca la inversión para actualizar cuánto vale — puedes poner el TOTAL de una cuenta compartida (como Insights) y la ganancia se reparte proporcional. ¿No cuadra? ⚙️ Mis categorías → mantener presionada → 🏦 Ajustar.</p>
+        <p class="hint" style="margin-top:8px">El aporte de cada mes entra a las alcancías el día ${st.diaAbono || 1} 📅. Tus compras salen del fondo acumulado. Si parte está invertida, toca la inversión para actualizar cuánto vale — puedes poner el TOTAL de una cuenta compartida y la ganancia se reparte proporcional. ¿No cuadra? ⚙️ Mis categorías → mantener presionada → 🏦 Ajustar.</p>
       </div>`;
   }
 
@@ -528,8 +549,8 @@ async function renderResumen() {
         const previas = ((alc[p.categoria] || {}).cuentas || []).map(q => q.cuenta);
         const cuenta = prompt(
           `📈 ¿A cuál inversión moviste plata de "${p.categoria.replace('Provisión ', '')}"?` +
-          (previas.length ? `\n\nYa existen: ${previas.join(' · ')}\n(mismo nombre = sumar ahí)` : '\n\nEj: Insights'),
-          previas[0] || 'Insights');
+          (previas.length ? `\n\nYa existen: ${previas.join(' · ')}\n(mismo nombre = sumar ahí)` : '\n\nEj: Fondo de inversión'),
+          previas[0] || '');
         if (!cuenta || !cuenta.trim()) return;
         const v = prompt(`¿Cuánto moviste a "${cuenta.trim()}"?\n(negativo si SACASTE de la inversión al bolsillo)`);
         if (v === null) return;
@@ -684,7 +705,7 @@ function renderDeudas(st) {
     const previas = ((cust[persona] || {}).cuentas || []).map(q => q.cuenta);
     const cuenta = prompt(
       `📈 ¿En cuál inversión moviste plata de ${persona}?` +
-      (previas.length ? `\n\nYa existen: ${previas.join(' · ')}\n(mismo nombre = sumar ahí; otro nombre = nueva)` : '\n\nEj: Inversión Virtual Bancolombia'),
+      (previas.length ? `\n\nYa existen: ${previas.join(' · ')}\n(mismo nombre = sumar ahí; otro nombre = nueva)` : '\n\nEj: Cuenta de inversión'),
       previas[0] || '');
     if (!cuenta || !cuenta.trim()) return;
     const v = prompt(`¿Cuánto de su plata moviste a "${cuenta.trim()}"?\n(negativo si SACASTE de la inversión a su disponible)`);
@@ -1277,7 +1298,7 @@ async function renderPatrimonio() {
   // --- inversiones 🪙 ---
   html += '<div class="card"><h3>🪙 Mis inversiones</h3>';
   if (!inv.cuentas.length) {
-    html += '<p class="hint">Registra cada plata que metas a una inversión (Insights, BTC, Fiducuenta...) y la app calculará cuánto has ganado comparando con tu Patrimonio. 💡 Usa el <b>mismo nombre</b> que le pones al activo en tu patrimonio.</p>';
+    html += '<p class="hint">Registra cada plata que metas a una inversión (fondos, CDT, cripto...) y la app calculará cuánto has ganado comparando con tu Patrimonio. 💡 Usa el <b>mismo nombre</b> que le pones al activo en tu patrimonio.</p>';
   } else {
     inv.cuentas.forEach(c => {
       const tieneValor = c.valorActual !== null;
