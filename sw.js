@@ -1,6 +1,6 @@
 /* Service worker: deja la app disponible aunque no haya internet */
-const CACHE = 'finanzas-v33';
-const ASSETS = ['./', './index.html', './styles.css?v=33', './app.js?v=33',
+const CACHE = 'finanzas-v34';
+const ASSETS = ['./', './index.html', './styles.css?v=34', './app.js?v=34',
                 './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -22,7 +22,7 @@ self.addEventListener('fetch', e => {
       caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {});
       return r;
     }).catch(() =>
-      // usa la copia guardada; ignoreSearch permite servir la versión anterior del archivo (?v=6 sirve para ?v=33)
+      // usa la copia guardada; ignoreSearch permite servir la versión anterior del archivo (?v=6 sirve para ?v=34)
       caches.match(e.request).then(hit => hit || caches.match(e.request, { ignoreSearch: true }))
     )
   );

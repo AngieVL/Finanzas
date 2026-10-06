@@ -201,6 +201,7 @@ function handle(req) {
       case 'tg_setup':     out = tgSetup(req.token); break;
       case 'tendencias':   out = getTendencias(); break;
       case 'anual':        out = resumenAnual(req.anio); break;
+      case 'categoria_detalle': out = categoriaDetalle(req.categoria); break;
       case 'patrimonio_get':  out = patrimonioGet(); break;
       case 'patrimonio_save': out = patrimonioSave(req.mes, req.items); break;
       case 'meta_add':     out = metaAdd(req.nombre, req.objetivo, req.fecha); break;
@@ -1159,16 +1160,31 @@ function inversionesGet() {
     mesValor = ult.mes;
     ult.items.forEach(function (it) { valores[it.item] = it.valor; });
   }
+  // punto de partida: lo que esa cuenta YA valía en tu primer registro de patrimonio.
+  // Sin esto la "ganancia" salía absurda (contaba como ganancia el saldo que ya tenías).
+  var base = {}, mesBase = '';
+  if (patri.length) {
+    mesBase = patri[0].mes;
+    patri[0].items.forEach(function (it) { base[it.item] = it.valor; });
+  }
   var lista = Object.keys(cuentas).map(function (c) {
     var valorActual = valores.hasOwnProperty(c) ? valores[c] : null;
-    var ganancia = valorActual !== null ? valorActual - cuentas[c].aportado : null;
+    var saldoInicial = base.hasOwnProperty(c) ? base[c] : 0;
+    // solo cuentan los aportes hechos desde ese primer registro
+    var aportesDesde = 0;
+    aportes.forEach(function (a) {
+      if (a.cuenta === c && (!mesBase || a.fecha.substring(0, 7) >= mesBase)) aportesDesde += a.monto;
+    });
+    var invertido = saldoInicial + aportesDesde;
+    var ganancia = valorActual !== null ? valorActual - invertido : null;
     return {
-      cuenta: c, aportado: cuentas[c].aportado, valorActual: valorActual,
-      ganancia: ganancia,
-      rendimiento: (ganancia !== null && cuentas[c].aportado > 0) ? Math.round(ganancia / cuentas[c].aportado * 1000) / 10 : null
+      cuenta: c, aportado: invertido, saldoInicial: saldoInicial, aportesDesde: aportesDesde,
+      valorActual: valorActual, ganancia: ganancia,
+      rendimiento: (ganancia !== null && invertido > 0) ? Math.round(ganancia / invertido * 1000) / 10 : null
     };
   });
-  return { ok: true, cuentas: lista, aportes: aportes.slice(-30).reverse(), mesValor: mesValor, itemsPatrimonio: Object.keys(valores) };
+  return { ok: true, cuentas: lista, aportes: aportes.slice(-30).reverse(),
+           mesValor: mesValor, mesBase: mesBase, itemsPatrimonio: Object.keys(valores) };
 }
 
 // ============================== TENDENCIAS Y METAS ==============================
@@ -1265,6 +1281,44 @@ function resumenAnual(anio) {
       ingresoPresupuestado: ingMensual
     },
     aniosDisponibles: Object.keys(anios).sort()
+  };
+}
+
+// historial completo de UNA categoría, agrupado por mes (para tocar su barra en el resumen)
+function categoriaDetalle(categoria) {
+  categoria = String(categoria || '').trim();
+  if (!categoria) return { ok: false, error: 'Falta la categoría' };
+  var sh = ss_().getSheetByName('Movimientos');
+  var rows = sh.getLastRow() > 1
+    ? sh.getRange(2, 1, sh.getLastRow() - 1, MOV_HEADERS.length).getValues() : [];
+  var porMes = {};
+  var total = 0;
+  rows.forEach(function (r) {
+    if (r[5] !== categoria) return;
+    if (r[3] !== 'Gasto' && r[3] !== 'Ingreso') return;
+    var fecha = fmtDate(r[1]);
+    var mes = fecha.substring(0, 7);
+    if (!porMes[mes]) porMes[mes] = { mes: mes, total: 0, movs: [] };
+    var monto = Number(r[6]) || 0;
+    porMes[mes].total += monto;
+    total += monto;
+    porMes[mes].movs.push({ id: r[0], fecha: fecha, monto: monto, descripcion: r[7], tipo: r[3] });
+  });
+  var meses = Object.keys(porMes).sort().reverse().map(function (m) {
+    porMes[m].movs.sort(function (a, b) { return a.fecha < b.fecha ? 1 : -1; });
+    return porMes[m];
+  });
+  var pres = ss_().getSheetByName('Presupuesto');
+  var mensual = 0, grupo = '';
+  if (pres.getLastRow() > 1) {
+    pres.getRange(2, 1, pres.getLastRow() - 1, 3).getValues().forEach(function (p) {
+      if (p[1] === categoria) { grupo = p[0]; mensual = Number(p[2]) || 0; }
+    });
+  }
+  return {
+    ok: true, categoria: categoria, grupo: grupo, mensual: mensual,
+    meses: meses, total: total,
+    promedio: meses.length ? Math.round(total / meses.length) : 0
   };
 }
 

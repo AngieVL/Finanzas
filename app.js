@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 33;
+const APP_VERSION = 34;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -522,7 +522,7 @@ async function renderResumen() {
                 : pct > 1 ? 'over'
                 : (g !== 'GASTOS' && pct >= 0.8 && pct < 1) ? 'warn' : '';
       rows += `
-        <div class="cat-row">
+        <div class="cat-row cat-click" data-cat="${p.categoria}">
           <div class="info">
             <span class="nombre">${emoji(p.categoria)} ${p.categoria.replace('Provisión ', '')}</span>
             <span class="valores">${fmt(usado)} / ${fmt(p.mensual)}</span>
@@ -563,7 +563,7 @@ async function renderResumen() {
         });
       }
       rows += `
-        <div class="cat-row">
+        <div class="cat-row cat-click" data-cat="${p.categoria}">
           <div class="info">
             <span class="nombre">${emoji(p.categoria)} ${p.categoria.replace('Provisión ', '')}</span>
             <span class="valores ${negativa ? 'neg-txt' : ''}"><b>${negativa ? '−' : ''}${fmt(Math.abs(cuentas.length ? a.totalReal : a.disponible))}</b> ${cuentas.length ? 'total real' : 'disponibles'}</span>
@@ -583,6 +583,12 @@ async function renderResumen() {
   }
 
   $('resumen-grupos').innerHTML = html;
+
+  // tocar una categoría → su historial completo mes a mes
+  document.querySelectorAll('#resumen-grupos .cat-click').forEach(el => el.onclick = (ev) => {
+    if (ev.target.closest('.cust-inv, button')) return; // no robarle el toque a lo de adentro
+    verCategoria(el.dataset.cat);
+  });
 
   // eventos de inversiones de alcancías
   const btnAlcInv = $('alc-invertir');
@@ -778,6 +784,72 @@ function renderDeudas(st) {
       await refreshState(); renderDeudas(state);
     } catch (e) { toast('Error: ' + e.message); }
   });
+}
+
+// ---------------- desglose de una categoría 📂 ----------------
+async function verCategoria(cat) {
+  toast('Cargando el historial de ' + cat.replace('Provisión ', '') + '...');
+  let d;
+  try { d = await api({ action: 'categoria_detalle', categoria: cat }); }
+  catch (e) { return toast('Error: ' + e.message); }
+
+  const nombre = cat.replace('Provisión ', '');
+  const esProv = d.grupo === 'PROVISIONES';
+  const alc = (state && state.alcancias && state.alcancias[cat]) || null;
+
+  let resumen = `
+    <div class="pd-tot"><span>📅 Promedio por mes</span><b>${fmt(d.promedio)}</b></div>
+    <div class="pd-tot"><span>${esProv ? '🏦 Ahorras cada mes' : '🎯 Presupuesto mensual'}</span><b>${fmt(d.mensual)}</b></div>`;
+  if (d.mensual > 0 && !esProv) {
+    const dif = d.mensual - d.promedio;
+    resumen += `<div class="pd-tot"><span>${dif >= 0 ? '✅ Te sobra en promedio' : '🚨 Te pasas en promedio'}</span><b class="${dif >= 0 ? 'verde' : 'amber'}">${fmt(Math.abs(dif))}</b></div>`;
+  }
+  if (esProv && alc) {
+    resumen += `<div class="pd-tot"><span>🏦 Disponible en la alcancía</span><b class="${alc.disponible < 0 ? 'amber' : 'verde'}">${fmt(alc.disponible)}</b></div>`;
+  }
+  resumen += `<div class="pd-tot"><span>Σ Total histórico</span><b>${fmt(d.total)}</b></div>`;
+
+  const maxMes = Math.max(...d.meses.map(m => m.total), 1);
+  let lista = d.meses.length ? '' : '<p class="hint">Sin movimientos en esta categoría todavía.</p>';
+  d.meses.forEach((m, i) => {
+    const sobre = d.mensual > 0 && !esProv && m.total > d.mensual;
+    lista += `
+      <div class="cd-mes">
+        <div class="cd-head" data-mes="${m.mes}">
+          <span class="cd-nombre">${mesCorto(m.mes)} ${m.mes.slice(0, 4)}</span>
+          <span class="cd-barra"><i style="width:${Math.round(m.total / maxMes * 100)}%; background:${sobre ? 'var(--red)' : 'var(--chart-gasto)'}"></i></span>
+          <span class="cd-monto ${sobre ? 'neg-txt' : ''}">${fmt(m.total)}</span>
+        </div>
+        <div class="cd-movs ${i === 0 ? '' : 'hidden'}" data-movs="${m.mes}">
+          ${m.movs.map(x => `
+            <div class="pd-mov">
+              <span class="emoji">${emoji(cat)}</span>
+              <div class="det">
+                <div class="desc">${x.descripcion || nombre}</div>
+                <div class="meta">${Number(x.fecha.slice(8, 10))} ${mesCorto(x.fecha.slice(0, 7)).toLowerCase()}</div>
+              </div>
+              <span class="monto">${fmt(x.monto)}</span>
+            </div>`).join('')}
+        </div>
+      </div>`;
+  });
+
+  const ov = document.createElement('div');
+  ov.className = 'sheet-overlay';
+  ov.innerHTML = `
+    <div class="sheet grande">
+      <h4>${emoji(cat)} ${nombre} — historial completo</h4>
+      ${resumen}
+      <div class="pd-lista">${lista}</div>
+      <button class="pd-cerrar">Cerrar</button>
+    </div>`;
+  ov.onclick = e => { if (e.target === ov) ov.remove(); };
+  ov.querySelector('.pd-cerrar').onclick = () => ov.remove();
+  ov.querySelectorAll('.cd-head').forEach(h => h.onclick = () => {
+    const movs = ov.querySelector(`[data-movs="${h.dataset.mes}"]`);
+    if (movs) movs.classList.toggle('hidden');
+  });
+  document.body.appendChild(ov);
 }
 
 // ---------------- desglose de una persona 👤 ----------------
