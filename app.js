@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 34;
+const APP_VERSION = 35;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -125,8 +125,45 @@ const COLORES = [
 
 const LOGOS = ['📊', '💰', '💵', '📈', '🏦', '💳', '🪙', '🎯', '🧾', '💎', '⚡', '🐷', '💜', '⭐'];
 
+// ---- utilidades de color: derivar una paleta completa de cualquier tono ----
+function hexRgb(h) {
+  h = h.replace('#', '');
+  if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+function rgbHex(r, g, b) {
+  return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+}
+function mezcla(c1, c2, p) {
+  const a = hexRgb(c1), b = hexRgb(c2);
+  return rgbHex(a[0] + (b[0] - a[0]) * p, a[1] + (b[1] - a[1]) * p, a[2] + (b[2] - a[2]) * p);
+}
+function luminancia(hex) {
+  const [r, g, b] = hexRgb(hex).map(v => {
+    v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+// paleta completa a partir de un color elegido (funciona con lima neón o azul oscuro)
+function derivarPaleta(hex, nombre) {
+  const claro = luminancia(hex) > 0.45;
+  return {
+    nombre: nombre || 'Personalizado', v: hex,
+    d: mezcla(hex, '#000000', claro ? 0.18 : 0.28),
+    p: mezcla(hex, '#ffffff', 0.3),
+    l: mezcla(hex, '#ffffff', 0.9),
+    lb: mezcla(hex, '#ffffff', 0.78),
+    dl: mezcla(hex, '#0a0d14', 0.86),
+    dl2: mezcla(hex, '#0a0d14', 0.74),
+    soft: claro ? hex : mezcla(hex, '#ffffff', 0.5),
+    fg: claro ? '#0a0d14' : '#ffffff',   // texto que se lee encima del acento
+  };
+}
+
 function paletaActual() {
-  return COLORES.find(x => x.nombre === prefs.color) || COLORES[0];
+  if (prefs.colorCustom) return derivarPaleta(prefs.colorCustom);
+  const c = COLORES.find(x => x.nombre === prefs.color) || COLORES[0];
+  return Object.assign({ fg: luminancia(c.v) > 0.45 ? '#0a0d14' : '#ffffff' }, c);
 }
 
 function applyPrefs() {
@@ -143,6 +180,7 @@ function applyPrefs() {
   r.setProperty('--violet-light', oscuro ? c.dl : c.l);
   r.setProperty('--tint2', oscuro ? c.dl2 : c.lb);
   r.setProperty('--soft', oscuro ? c.soft : c.d);
+  r.setProperty('--on-accent', c.fg || '#ffffff');
   document.querySelector('meta[name="theme-color"]').content = c.v;
   // ícono y nombre de la app
   const logo = prefs.logo || LOGOS[0];
@@ -182,10 +220,20 @@ function renderApariencia() {
     const b = document.createElement('button');
     b.style.background = `linear-gradient(120deg, ${c.v}, ${c.p})`;
     b.title = c.nombre;
-    b.className = (prefs.color || COLORES[0].nombre) === c.nombre ? 'sel' : '';
-    b.onclick = () => { prefs.color = c.nombre; savePrefs(); renderApariencia(); };
+    b.className = (!prefs.colorCustom && (prefs.color || COLORES[0].nombre) === c.nombre) ? 'sel' : '';
+    b.onclick = () => { prefs.color = c.nombre; delete prefs.colorCustom; savePrefs(); renderApariencia(); };
     box.appendChild(b);
   });
+  // selector de color exacto
+  const custom = document.createElement('label');
+  custom.className = 'color-custom' + (prefs.colorCustom ? ' sel' : '');
+  custom.title = 'Elegir un color exacto';
+  custom.innerHTML = `<input type="color" id="color-picker" value="${prefs.colorCustom || paletaActual().v}">`;
+  box.appendChild(custom);
+  const inp = custom.querySelector('input');
+  const aplicar = () => { prefs.colorCustom = inp.value; savePrefs(); };
+  inp.oninput = aplicar;                       // vista previa en vivo mientras mueve el slider
+  inp.onchange = () => { aplicar(); renderApariencia(); };
 }
 
 function savePrefs() {
@@ -468,10 +516,18 @@ function renderMini() {
     if (m.tipo === 'Ingreso') ingreso += m.monto;
   });
   const presTotal = (state.presupuesto || []).filter(p => p.grupo !== 'INGRESOS').reduce((s, p) => s + p.mensual, 0);
+  const restante = presTotal - gasto;
+  const usado = presTotal > 0 ? Math.min(Math.round(gasto / presTotal * 100), 100) : 0;
   $('mini-resumen').innerHTML = `
-    <div class="fila"><span>💸 Gastado este mes</span><b class="neg">${fmt(gasto)}</b></div>
-    <div class="fila"><span>🎯 Presupuesto mensual</span><b>${fmt(presTotal)}</b></div>
-    <div class="fila"><span>💰 Ingresos del mes</span><b class="pos">${fmt(ingreso)}</b></div>`;
+    <div class="hero">
+      <div class="etiqueta">Te queda este mes <span class="badge">${usado}% usado</span></div>
+      <div class="cifra">${fmt(restante)}</div>
+      <div class="hero-pies">
+        <div class="hero-pie"><small>↓ Gastado</small><b>${fmt(gasto)}</b></div>
+        <div class="hero-pie"><small>↑ Ingresos</small><b>${fmt(ingreso)}</b></div>
+      </div>
+    </div>`;
+  $('mini-resumen').classList.remove('card', 'mini-resumen');
 }
 
 async function renderResumen() {
@@ -492,10 +548,19 @@ async function renderResumen() {
     if (m.tipo === 'Ingreso') ingreso += m.monto;
     if (m.tipo === 'Por cobrar') porCobrar += m.monto;
   });
+  const balance = ingreso - gasto;
+  const pctAhorro = ingreso > 0 ? Math.round(balance / ingreso * 100) : null;
   $('resumen-totales').innerHTML = `
-    <div class="tot ing"><small>Ingresos</small><b>${fmt(ingreso)}</b></div>
-    <div class="tot gas"><small>Gastos</small><b>${fmt(gasto)}</b></div>
-    <div class="tot bal"><small>Balance</small><b>${fmt(ingreso - gasto)}</b></div>`;
+    <div class="hero">
+      <div class="etiqueta">Balance de ${nombreMes.split(' ')[0]}
+        ${pctAhorro !== null ? `<span class="badge">${pctAhorro >= 0 ? '+' : ''}${pctAhorro}% ahorrado</span>` : ''}
+      </div>
+      <div class="cifra">${fmt(balance)}</div>
+      <div class="hero-pies">
+        <div class="hero-pie"><small>↑ Ingresos</small><b>${fmt(ingreso)}</b></div>
+        <div class="hero-pie"><small>↓ Gastos</small><b>${fmt(gasto)}</b></div>
+      </div>
+    </div>`;
 
   // totales por categoría del mes visto
   const tot = {};
