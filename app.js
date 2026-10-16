@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 35;
+const APP_VERSION = 36;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -471,6 +471,15 @@ async function guardar() {
     action: 'add', fecha: $('entry-fecha').value || hoyFecha(), tipo,
     categoria, grupo, monto: p.monto, descripcion: p.desc,
   };
+
+  // ¿te pagaron MÁS de lo que debían? el excedente no es deuda: hay que darle destino
+  if (tipo === 'Abono' || tipo === 'Le pagué') {
+    const fuente = tipo === 'Abono' ? (state && state.deudas) : (state && state.misDeudas);
+    const saldo = (fuente && fuente[personaSel] ? fuente[personaSel].saldo : 0);
+    if (saldo > 0 && p.monto > saldo) {
+      return resolverExcedente(mov, saldo, p.monto - saldo, tipo);
+    }
+  }
   $('entry-input').value = ''; $('monto-preview').textContent = '';
   catSel = null; catManual = false; $('cat-auto').classList.add('hidden'); renderChips();
   try {
@@ -484,6 +493,73 @@ async function guardar() {
     renderQueue();
     toast('⏳ No se pudo guardar ahora (sin señal o Google con problemas). Quedó en pendientes y se enviará solo ✓');
   }
+}
+
+// categoría de ingreso donde caen los intereses ganados
+function catIntereses() {
+  const ing = getCats('Ingreso');
+  return (ing.find(c => /inter[eé]s|rendimiento|ganancia/i.test(c.c))
+       || ing.find(c => /otros/i.test(c.c))
+       || ing[0] || { c: 'Otros Ingresos' }).c;
+}
+
+// un pago mayor a la deuda se parte en dos: lo que salda + el excedente a donde corresponda
+function resolverExcedente(mov, saldo, extra, tipo) {
+  const persona = mov.categoria;
+  const base = { fecha: mov.fecha, descripcion: mov.descripcion };
+  const guardar2 = async (items, msg) => {
+    try {
+      await api({ action: 'add_batch', items });
+      toast(msg);
+      limpiarEntrada();
+      refreshState().then(() => { renderMini(); renderChips(); });
+    } catch (e) { toast('Error: ' + e.message); }
+  };
+  const abonoExacto = { ...base, tipo, grupo: tipo === 'Abono' ? 'POR COBRAR' : 'YO DEBO',
+                        categoria: persona, monto: saldo,
+                        descripcion: (mov.descripcion || 'pago') + ' (salda la deuda)' };
+
+  if (tipo === 'Abono') {
+    const cat = catIntereses();
+    actionSheet(`💰 ${persona} te pagó ${fmt(extra)} de más — ¿qué es ese excedente?`, [
+      { label: `📈 Ganancia / intereses → ${cat}`, fn: () => guardar2([
+          abonoExacto,
+          { ...base, tipo: 'Ingreso', grupo: 'INGRESOS', categoria: cat, monto: extra,
+            descripcion: `📈 Intereses préstamo ${persona}` }
+        ], `✓ Deuda saldada + ${fmt(extra)} de ganancia`) },
+      { label: '👝 Es plata suya que le guardo', fn: () => guardar2([
+          abonoExacto,
+          { ...base, tipo: 'Guardo', grupo: 'PLATA AJENA', categoria: persona, monto: extra,
+            descripcion: 'excedente de su pago' }
+        ], `✓ Deuda saldada + ${fmt(extra)} guardados para ${persona}`) },
+      { label: '🤝 Ahora yo le debo ese excedente', fn: () => guardar2([
+          abonoExacto,
+          { ...base, tipo: 'Me prestaron', grupo: 'YO DEBO', categoria: persona, monto: extra,
+            descripcion: 'excedente de su pago' }
+        ], `✓ Deuda saldada · le debes ${fmt(extra)}`) },
+    ]);
+  } else {
+    actionSheet(`💸 Le pagaste ${fmt(extra)} de más a ${persona} — ¿qué es ese excedente?`, [
+      { label: '🤝 Queda debiéndomelo', fn: () => guardar2([
+          abonoExacto,
+          { ...base, tipo: 'Por cobrar', grupo: 'POR COBRAR', categoria: persona, monto: extra,
+            descripcion: 'excedente de mi pago' }
+        ], `✓ Deuda saldada · ${persona} te debe ${fmt(extra)}`) },
+      { label: '🎁 Se lo regalé', fn: () => guardar2([
+          abonoExacto,
+          { ...base, tipo: 'Gasto', grupo: grupoDe('Otros', 'Gasto'), categoria: 'Otros', monto: extra,
+            descripcion: `regalo a ${persona}` }
+        ], `✓ Deuda saldada · ${fmt(extra)} como gasto`) },
+    ]);
+  }
+}
+
+function limpiarEntrada() {
+  $('entry-input').value = '';
+  $('monto-preview').textContent = '';
+  catSel = null; catManual = false;
+  $('cat-auto').classList.add('hidden');
+  renderChips();
 }
 
 async function flushQueue() {
@@ -731,8 +807,10 @@ function renderDeudas(st) {
             <div class="quien persona-link" data-persona="${p}">👤 ${p} <span class="ver-mas">›</span></div>
             <div class="detalle">prestado ${fmt(d.debe)} · pagado ${fmt(d.abonado)}</div>
           </div>
-          <span class="saldo ${d.saldo <= 0 ? 'cero' : ''}">${d.saldo <= 0 ? '✓ a paz' : fmt(d.saldo)}</span>
-        </div>`;
+          <span class="saldo ${d.saldo > 0 ? '' : d.saldo < 0 ? 'debo' : 'cero'}">${
+            d.saldo > 0 ? fmt(d.saldo) : d.saldo < 0 ? '+' + fmt(-d.saldo) + ' de más' : '✓ a paz'}</span>
+        </div>
+        ${d.saldo < 0 ? '<p class="hint">Te pagó de más. Toca su nombre → <b>⚖️ Cuadrar</b> para sacarlo del contador.</p>' : ''}`;
     });
     html += `
       <div class="grupo-card">
@@ -939,9 +1017,12 @@ async function verPersona(persona) {
 
   let resumen = '';
   if (deu && (deu.debe || deu.abonado)) {
+    const neg = deu.saldo < 0;
     resumen += `
-      <div class="pd-tot"><span>🤝 Me debe</span><b class="${deu.saldo > 0 ? 'amber' : 'verde'}">${deu.saldo > 0 ? fmt(deu.saldo) : '✓ a paz'}</b></div>
-      ${deu.saldo > 0 ? `<button class="condonar-btn" data-dir="me_deben" data-monto="${deu.saldo}">🕊️ Condonar (perdonarle la deuda)</button>` : ''}`;
+      <div class="pd-tot"><span>🤝 Me debe</span><b class="${deu.saldo > 0 ? 'amber' : 'verde'}">${
+        deu.saldo > 0 ? fmt(deu.saldo) : neg ? `te pagó ${fmt(-deu.saldo)} de más` : '✓ a paz'}</b></div>
+      ${deu.saldo > 0 ? `<button class="condonar-btn" data-dir="me_deben" data-monto="${deu.saldo}">🕊️ Condonar (perdonarle la deuda)</button>` : ''}
+      ${neg ? `<button class="cuadrar-btn" data-monto="${-deu.saldo}">⚖️ Cuadrar: sacar ${fmt(-deu.saldo)} del contador</button>` : ''}`;
   }
   if (mia && (mia.prestado || mia.pagado)) {
     resumen += `
@@ -1006,6 +1087,38 @@ async function verPersona(persona) {
     </div>`;
   ov.onclick = e => { if (e.target === ov) ov.remove(); };
   ov.querySelector('.pd-cerrar').onclick = () => ov.remove();
+  // saldo negativo: sacarlo del contador de deudas y darle su destino real
+  ov.querySelectorAll('.cuadrar-btn').forEach(b => b.onclick = () => {
+    const extra = Number(b.dataset.monto);
+    const hoy = hoyFecha();
+    const ajuste = { fecha: hoy, tipo: 'Por cobrar', grupo: 'POR COBRAR', categoria: persona,
+                     monto: extra, descripcion: '⚖️ Ajuste: excedente sacado del contador' };
+    const aplicar = async (items, msg) => {
+      try {
+        await api({ action: 'add_batch', items });
+        toast(msg);
+        ov.remove();
+        await refreshState();
+        renderDeudas(state); renderChips();
+      } catch (e) { toast('Error: ' + e.message); }
+    };
+    const cat = catIntereses();
+    actionSheet(`⚖️ ${persona} te pagó ${fmt(extra)} de más — ¿qué fue?`, [
+      { label: `📈 Ganancia / intereses → ${cat}`, fn: () => aplicar([ajuste,
+          { fecha: hoy, tipo: 'Ingreso', grupo: 'INGRESOS', categoria: cat, monto: extra,
+            descripcion: `📈 Intereses préstamo ${persona}` }],
+          `✓ Contador en cero + ${fmt(extra)} de ganancia`) },
+      { label: '👝 Es plata suya que le guardo', fn: () => aplicar([ajuste,
+          { fecha: hoy, tipo: 'Guardo', grupo: 'PLATA AJENA', categoria: persona, monto: extra,
+            descripcion: 'excedente de su pago' }],
+          `✓ Contador en cero · ${fmt(extra)} guardados`) },
+      { label: '🤝 Ahora yo le debo ese excedente', fn: () => aplicar([ajuste,
+          { fecha: hoy, tipo: 'Me prestaron', grupo: 'YO DEBO', categoria: persona, monto: extra,
+            descripcion: 'excedente de su pago' }],
+          `✓ Contador en cero · le debes ${fmt(extra)}`) },
+    ]);
+  });
+
   ov.querySelectorAll('.cruzar-btn').forEach(b => b.onclick = async () => {
     const dir = b.dataset.dir;
     const sugerido = Number(b.dataset.monto);
