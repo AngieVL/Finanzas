@@ -202,6 +202,7 @@ function handle(req) {
       case 'tendencias':   out = getTendencias(); break;
       case 'anual':        out = resumenAnual(req.anio); break;
       case 'categoria_detalle': out = categoriaDetalle(req.categoria); break;
+      case 'movs_filtro':  out = movsFiltro(req); break;
       case 'patrimonio_get':  out = patrimonioGet(); break;
       case 'patrimonio_save': out = patrimonioSave(req.mes, req.items); break;
       case 'meta_add':     out = metaAdd(req.nombre, req.objetivo, req.fecha); break;
@@ -1281,6 +1282,52 @@ function resumenAnual(anio) {
       ingresoPresupuestado: ingMensual
     },
     aniosDisponibles: Object.keys(anios).sort()
+  };
+}
+
+// explorador de movimientos: filtra por mes, tipo, categoría y texto — sin el límite de 150
+function movsFiltro(req) {
+  var sh = ss_().getSheetByName('Movimientos');
+  var rows = sh.getLastRow() > 1
+    ? sh.getRange(2, 1, sh.getLastRow() - 1, MOV_HEADERS.length).getValues() : [];
+  var fMes = String(req.mes || '');
+  var fAnio = String(req.anio || '');
+  var fTipo = String(req.tipo || '');
+  var fCat = String(req.categoria || '');
+  var fTexto = String(req.texto || '').toLowerCase().trim();
+  var meses = {}, cats = {};
+  var lista = [], totG = 0, totI = 0, totPersonas = 0;
+
+  rows.forEach(function (r) {
+    var fecha = fmtDate(r[1]);
+    var mes = fecha.substring(0, 7);
+    var tipo = r[3], grupo = r[4], cat = r[5], monto = Number(r[6]) || 0, desc = String(r[7] || '');
+    meses[mes] = true;
+    if (tipo === 'Gasto' || tipo === 'Ingreso') cats[cat] = true;
+
+    if (fMes && mes !== fMes) return;
+    if (fAnio && mes.substring(0, 4) !== fAnio) return;
+    if (fCat && cat !== fCat) return;
+    if (fTipo === 'Gasto' && tipo !== 'Gasto') return;
+    if (fTipo === 'Ingreso' && tipo !== 'Ingreso') return;
+    if (fTipo === 'personas' && grupo !== 'POR COBRAR' && grupo !== 'YO DEBO' && grupo !== 'PLATA AJENA') return;
+    if (fTexto && desc.toLowerCase().indexOf(fTexto) < 0 && String(cat).toLowerCase().indexOf(fTexto) < 0) return;
+
+    if (tipo === 'Gasto') totG += monto;
+    else if (tipo === 'Ingreso') totI += monto;
+    else totPersonas += monto;
+    lista.push({ id: r[0], fecha: fecha, mes: mes, tipo: tipo, grupo: grupo,
+                 categoria: cat, monto: monto, descripcion: desc });
+  });
+
+  lista.sort(function (a, b) { return a.fecha < b.fecha ? 1 : (a.fecha > b.fecha ? -1 : 0); });
+  return {
+    ok: true, total: lista.length,
+    movimientos: lista.slice(0, 500),
+    truncado: lista.length > 500,
+    totalGastos: totG, totalIngresos: totI, totalPersonas: totPersonas,
+    meses: Object.keys(meses).sort().reverse(),
+    categorias: Object.keys(cats).sort()
   };
 }
 

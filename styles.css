@@ -230,6 +230,40 @@ button.secondary {
 
 /* ---------- movimientos ---------- */
 .search { margin-bottom: 12px; }
+.movs-filtros { display: flex; gap: 8px; margin: 10px 0; }
+.movs-filtros select {
+  flex: 1; min-width: 0; margin: 0;
+  background: var(--card); border: 1px solid var(--linea); color: var(--text);
+  border-radius: 14px; padding: 11px 12px; font-size: 13px; font-weight: 600;
+  appearance: none; cursor: pointer;
+}
+.movs-res {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: var(--card); border: 1px solid var(--linea);
+  border-radius: var(--radius-sm); padding: 11px 14px; margin-bottom: 12px;
+}
+.movs-res-tot { font-size: 13px; font-weight: 800; }
+.movs-res-montos { flex: 1; text-align: right; font-size: 13px; font-weight: 700; }
+.movs-res-montos .gas { color: var(--red); }
+.movs-res-montos .ing { color: var(--green); }
+.movs-res .chip-btn { padding: 6px 11px; font-size: 12px; }
+.movs-chip {
+  display: inline-block; background: var(--card-2); color: var(--muted);
+  border-radius: 20px; padding: 2px 9px; font-size: 11.5px; margin-left: 4px;
+}
+.movs-mes-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 12px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase;
+  color: var(--muted); margin: 16px 2px 8px;
+}
+.movs-mes-head span:last-child { font-size: 11.5px; letter-spacing: 0; text-transform: none; }
+
+/* cifras tocables (llevan al explorador) */
+.tap { cursor: pointer; }
+.tabla-anual td.tap { text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
+.tabla-anual tr.tap-cat:active td { background: var(--card-2); }
+.hero-pie.tap:active { background: rgba(255,255,255,.3); }
+.hero-hint { font-size: 10.5px; opacity: .7; text-align: center; margin-top: 8px; }
 .mov {
   background: var(--card); border: 1px solid var(--linea);
   border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 8px;

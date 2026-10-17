@@ -1,7 +1,7 @@
 /* ================== MIS FINANZAS — app.js ================== */
 'use strict';
 
-const APP_VERSION = 36;
+const APP_VERSION = 37;
 
 // ---------------- Categorías (mismas de tu presupuesto) ----------------
 // lista de respaldo (solo se ve antes de conectar; las reales vienen de TU hoja)
@@ -633,10 +633,13 @@ async function renderResumen() {
       </div>
       <div class="cifra">${fmt(balance)}</div>
       <div class="hero-pies">
-        <div class="hero-pie"><small>↑ Ingresos</small><b>${fmt(ingreso)}</b></div>
-        <div class="hero-pie"><small>↓ Gastos</small><b>${fmt(gasto)}</b></div>
+        <div class="hero-pie tap" data-tipo="Ingreso"><small>↑ Ingresos</small><b>${fmt(ingreso)}</b></div>
+        <div class="hero-pie tap" data-tipo="Gasto"><small>↓ Gastos</small><b>${fmt(gasto)}</b></div>
       </div>
+      <div class="hero-hint">Toca ingresos o gastos para ver el detalle 👆</div>
     </div>`;
+  $('resumen-totales').querySelectorAll('.hero-pie.tap').forEach(el => el.onclick = () =>
+    irAMovimientos({ mes: mesVista, tipo: el.dataset.tipo }));
 
   // totales por categoría del mes visto
   const tot = {};
@@ -1326,11 +1329,12 @@ async function renderAnual() {
   d.meses.forEach((m, i) => {
     const vacio = !m.ingresos && !m.gastos;
     if (vacio && i > mesActual) return;
+    const mk = anioVista + '-' + String(i + 1).padStart(2, '0');
     filas += `
       <tr class="${i === mesActual && anioVista === new Date().getFullYear() ? 'mes-actual' : ''} ${vacio ? 'vacio' : ''}">
-        <td>${NOMBRES_MES[i]}</td>
-        <td class="ing">${m.ingresos ? fmt(m.ingresos) : '–'}</td>
-        <td class="gas">${m.gastos ? fmt(m.gastos) : '–'}</td>
+        <td class="tap" data-mes="${mk}">${NOMBRES_MES[i]}</td>
+        <td class="ing ${m.ingresos ? 'tap' : ''}" data-mes="${mk}" data-tipo="Ingreso">${m.ingresos ? fmt(m.ingresos) : '–'}</td>
+        <td class="gas ${m.gastos ? 'tap' : ''}" data-mes="${mk}" data-tipo="Gasto">${m.gastos ? fmt(m.gastos) : '–'}</td>
         <td class="${m.neto < 0 ? 'neg' : 'net'}">${(m.ingresos || m.gastos) ? fmt(m.neto) : '–'}</td>
       </tr>`;
   });
@@ -1343,8 +1347,8 @@ async function renderAnual() {
     </div>
 
     <div class="totales">
-      <div class="tot ing"><small>Ingresos del año</small><b>${fmt(t.ingresos)}</b></div>
-      <div class="tot gas"><small>Gastos del año</small><b>${fmt(t.gastos)}</b></div>
+      <div class="tot ing tap" data-tipo="Ingreso"><small>Ingresos del año</small><b>${fmt(t.ingresos)}</b></div>
+      <div class="tot gas tap" data-tipo="Gasto"><small>Gastos del año</small><b>${fmt(t.gastos)}</b></div>
     </div>
     <div class="card anual-hero">
       <small>Te quedó (ingresos − gastos)</small>
@@ -1384,9 +1388,9 @@ async function renderAnual() {
     let rows = '';
     cats.forEach(c => {
       rows += `
-        <tr>
-          <td>${emoji(c.categoria)} ${c.categoria.replace('Provisión ', '')}</td>
-          <td>${fmt(c.total)}</td>
+        <tr class="tap-cat" data-cat="${c.categoria}">
+          <td class="tap">${emoji(c.categoria)} ${c.categoria.replace('Provisión ', '')}</td>
+          <td class="tap">${fmt(c.total)}</td>
           <td class="prom">${fmt(c.promedio)}</td>
         </tr>`;
     });
@@ -1407,6 +1411,15 @@ async function renderAnual() {
   box.innerHTML = html;
   $('anio-prev').onclick = () => { anioVista--; renderAnual(); };
   $('anio-next').onclick = () => { anioVista++; renderAnual(); };
+
+  // tocar cualquier cifra abre el explorador ya filtrado 👇
+  box.querySelectorAll('.totales .tap').forEach(el => el.onclick = () =>
+    irAMovimientos({ anio: String(anioVista), tipo: el.dataset.tipo }));
+  box.querySelectorAll('.tabla-anual td.tap').forEach(el => el.onclick = () => {
+    const fila = el.closest('tr');
+    if (fila && fila.dataset.cat) irAMovimientos({ anio: String(anioVista), categoria: fila.dataset.cat });
+    else irAMovimientos({ mes: el.dataset.mes, tipo: el.dataset.tipo || '' });
+  });
 }
 
 // ---------------- tendencias 📈 ----------------
@@ -1950,26 +1963,92 @@ async function cerrarViaje(v, registrarGasto, registrarDeuda) {
 }
 
 // ---------------- movimientos ----------------
+// ---------------- explorador de movimientos 🔎 ----------------
+const MOVS_VACIO = { mes: '', anio: '', tipo: '', categoria: '', texto: '' };
+let movsFiltro = Object.assign({}, MOVS_VACIO);
+
 async function renderMovs() {
-  const st = await refreshState();
-  const q = ($('movs-buscar').value || '').toLowerCase();
-  const list = (st && st.movimientos || []).filter(m =>
-    !q || (m.descripcion || '').toLowerCase().includes(q) || (m.categoria || '').toLowerCase().includes(q));
-  $('movs-lista').innerHTML = list.slice(0, 100).map(m => `
-    <div class="mov">
-      <span class="emoji">${{ 'Ingreso': '💰', 'Por cobrar': '🤝', 'Abono': '💵', 'Me prestaron': '💸', 'Le pagué': '✅', 'Guardo': '👝', 'Entrego': '📤', 'Reembolso': '🔄' }[m.tipo] || emoji(m.categoria)}</span>
-      <div class="det">
-        <div class="desc">${m.descripcion || m.categoria}</div>
-        <div class="meta">${m.fecha} · ${m.categoria}</div>
-      </div>
-      <span class="monto ${m.tipo === 'Ingreso' ? 'ing' : ''}">${m.tipo === 'Ingreso' ? '+' : ''}${fmt(m.monto)}</span>
-      <button class="del" data-id="${m.id}">✕</button>
-    </div>`).join('') || '<div class="card">Sin movimientos aún</div>';
-  document.querySelectorAll('.mov .del').forEach(b => b.onclick = async () => {
+  const box = $('movs-lista');
+  box.innerHTML = '<div class="card">Buscando... 🔎</div>';
+  let d;
+  try { d = await api({ action: 'movs_filtro', ...movsFiltro }); }
+  catch (e) { box.innerHTML = `<div class="card">Sin conexión: ${e.message}</div>`; return; }
+
+  // llenar los selectores una sola vez (conservando lo elegido)
+  const selMes = $('movs-mes'), selCat = $('movs-cat');
+  if (selMes.options.length <= 1) {
+    d.meses.forEach(m => selMes.add(new Option(`${mesCorto(m)} ${m.slice(0, 4)}`, m)));
+  }
+  if (selCat.options.length <= 1) {
+    d.categorias.forEach(c => selCat.add(new Option(`${emoji(c)} ${c}`, c)));
+  }
+  selMes.value = movsFiltro.mes;
+  selCat.value = movsFiltro.categoria;
+  document.querySelectorAll('#movs-tipo button').forEach(b =>
+    b.classList.toggle('active', (b.dataset.f || '') === movsFiltro.tipo));
+
+  // resumen de lo filtrado
+  const partes = [];
+  if (d.totalGastos) partes.push(`<span class="gas">💸 ${fmt(d.totalGastos)}</span>`);
+  if (d.totalIngresos) partes.push(`<span class="ing">💰 ${fmt(d.totalIngresos)}</span>`);
+  if (d.totalPersonas) partes.push(`<span>🤝 ${fmt(d.totalPersonas)}</span>`);
+  const hayFiltro = movsFiltro.mes || movsFiltro.anio || movsFiltro.tipo || movsFiltro.categoria || movsFiltro.texto;
+  const etiqueta = movsFiltro.anio ? `<span class="movs-chip">🗓️ ${movsFiltro.anio}</span>` : '';
+  $('movs-resumen').innerHTML = `
+    <div class="movs-res">
+      <div class="movs-res-tot">${d.total} ${d.total === 1 ? 'movimiento' : 'movimientos'} ${etiqueta}</div>
+      <div class="movs-res-montos">${partes.join(' · ') || '—'}</div>
+      ${hayFiltro ? '<button id="movs-limpiar" class="chip-btn">✕ Quitar filtros</button>' : ''}
+    </div>`;
+
+  if (!d.movimientos.length) {
+    box.innerHTML = '<div class="card"><p class="hint">No hay movimientos con esos filtros.</p></div>';
+  } else {
+    // agrupados por mes, con subtotal de cada mes
+    let html = '', mesActual = null;
+    const porMes = {};
+    d.movimientos.forEach(m => { porMes[m.mes] = (porMes[m.mes] || 0) + (m.tipo === 'Gasto' ? m.monto : 0); });
+    d.movimientos.forEach(m => {
+      if (m.mes !== mesActual) {
+        mesActual = m.mes;
+        html += `<div class="movs-mes-head"><span>${mesCorto(m.mes)} ${m.mes.slice(0, 4)}</span>
+                 <span>${porMes[m.mes] ? fmt(porMes[m.mes]) + ' en gastos' : ''}</span></div>`;
+      }
+      const ico = { 'Ingreso': '💰', 'Por cobrar': '🤝', 'Abono': '💵', 'Me prestaron': '💸',
+                    'Le pagué': '✅', 'Guardo': '👝', 'Entrego': '📤' }[m.tipo] || emoji(m.categoria);
+      html += `
+        <div class="mov">
+          <span class="emoji">${ico}</span>
+          <div class="det">
+            <div class="desc">${m.descripcion || m.categoria}</div>
+            <div class="meta">${Number(m.fecha.slice(8, 10))} ${mesCorto(m.fecha.slice(0, 7)).toLowerCase()} · ${m.categoria}</div>
+          </div>
+          <span class="monto ${m.tipo === 'Ingreso' ? 'ing' : ''}">${m.tipo === 'Ingreso' ? '+' : ''}${fmt(m.monto)}</span>
+          <button class="del" data-id="${m.id}">✕</button>
+        </div>`;
+    });
+    if (d.truncado) html += '<p class="hint">Mostrando los 500 más recientes. Afina los filtros para ver el resto.</p>';
+    box.innerHTML = html;
+  }
+
+  const limpiar = $('movs-limpiar');
+  if (limpiar) limpiar.onclick = () => {
+    movsFiltro = Object.assign({}, MOVS_VACIO);
+    $('movs-buscar').value = '';
+    renderMovs();
+  };
+  box.querySelectorAll('.mov .del').forEach(b => b.onclick = async () => {
     if (!confirm('¿Eliminar este movimiento?')) return;
-    try { await api({ action: 'delete', id: b.dataset.id }); toast('Eliminado'); renderMovs(); }
+    try { await api({ action: 'delete', id: b.dataset.id }); toast('Eliminado'); renderMovs(); refreshState(); }
     catch (e) { toast('Error: ' + e.message); }
   });
+}
+
+// abrir el explorador ya filtrado (desde el resumen anual, por ejemplo)
+function irAMovimientos(filtro) {
+  movsFiltro = Object.assign({}, MOVS_VACIO, filtro);
+  $('movs-buscar').value = movsFiltro.texto || '';
+  switchView('movs');
 }
 
 // ---------------- chat (multi-conversación) ----------------
@@ -2509,7 +2588,18 @@ function init() {
   document.querySelectorAll('#res-tabs button').forEach(b => b.onclick = () => renderResTab(b.dataset.rtab));
   $('mes-prev').onclick = () => moverMes(-1);
   $('mes-next').onclick = () => moverMes(1);
-  $('movs-buscar').addEventListener('input', () => renderMovs());
+  // filtros del explorador de movimientos
+  let tBuscar = null;
+  $('movs-buscar').addEventListener('input', () => {
+    clearTimeout(tBuscar);
+    tBuscar = setTimeout(() => { movsFiltro.texto = $('movs-buscar').value.trim(); renderMovs(); }, 350);
+  });
+  document.querySelectorAll('#movs-tipo button').forEach(b => b.onclick = () => {
+    movsFiltro.tipo = b.dataset.f || '';
+    renderMovs();
+  });
+  $('movs-mes').onchange = () => { movsFiltro.mes = $('movs-mes').value; renderMovs(); };
+  $('movs-cat').onchange = () => { movsFiltro.categoria = $('movs-cat').value; renderMovs(); };
   $('chat-send').onclick = enviarChat;
   $('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') enviarChat(); });
   $('cfg-probar').onclick = probarConexion;

@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="styles.css?v=36">
+<link rel="stylesheet" href="styles.css?v=37">
 </head>
 <body>
 
@@ -84,7 +84,18 @@
 
   <!-- ============ MOVIMIENTOS ============ -->
   <section id="view-movs" class="view hidden">
-    <input id="movs-buscar" type="search" placeholder="🔍 Buscar movimiento..." class="search">
+    <input id="movs-buscar" type="search" placeholder="🔍 Buscar por descripción o categoría..." class="search">
+    <div class="tipo-toggle" id="movs-tipo">
+      <button data-f="" class="active">Todo</button>
+      <button data-f="Gasto">💸 Gastos</button>
+      <button data-f="Ingreso">💰 Ingresos</button>
+      <button data-f="personas">🤝 Personas</button>
+    </div>
+    <div class="movs-filtros">
+      <select id="movs-mes"><option value="">Todos los meses</option></select>
+      <select id="movs-cat"><option value="">Todas las categorías</option></select>
+    </div>
+    <div id="movs-resumen"></div>
     <div id="movs-lista"></div>
   </section>
 
@@ -201,6 +212,6 @@
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="app.js?v=36"></script>
+<script src="app.js?v=37"></script>
 </body>
 </html>
